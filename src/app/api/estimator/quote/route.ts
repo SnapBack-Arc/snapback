@@ -76,6 +76,15 @@ export async function POST(request: Request) {
         scope_quantity: result.session.scope_quantity,
         attempt_count: result.session.attempt_count,
         escrow_held_usdc: result.session.escrow_held_usdc,
+        // The comparable listings the Estimator itself matched against to
+        // produce seller_cost_estimate_usdc (marketplace.ts), price-ascending
+        // — the marketplace step's "auto-selected" pick is simply the first
+        // of these, reusing the same matching rather than re-deriving it.
+        matched_listing_ids: (result.session.matched_listing_ids as string[] | null) ?? [],
+        // "keyword": these are a real match on the request's subject.
+        // "fallback": nothing matched — these are just the cheapest active
+        // listings. Callers must not present a fallback pick as relevant.
+        seller_match_type: result.seller_match_type,
       },
     });
   } catch (err) {

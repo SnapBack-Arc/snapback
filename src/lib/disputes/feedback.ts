@@ -28,8 +28,11 @@ const SCHEMA = {
     rewritten_specs: {
       type: "array",
       items: { type: "string" },
-      minItems: 2,
-      maxItems: 3,
+      // Claude's structured-output API rejects minItems/maxItems other than
+      // 0 or 1 on array schemas ("values other than 0 or 1 are not
+      // supported") — every call was failing outright before this, silently
+      // swallowed by the try/catch in resolveDispute's settleContestWin. The
+      // 2-3 constraint now lives only in the description text below.
       description:
         "2-3 alternative phrasings of the ORIGINAL request, rewritten to close the ambiguity gap so a seller following the SLA couldn't reasonably deliver the same shortfall again.",
     },

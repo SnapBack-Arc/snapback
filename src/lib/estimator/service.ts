@@ -35,6 +35,11 @@ export type SubmitResult = {
   charged_usdc: number;
   /** Set when the submission failed the gate and swept the prior session. */
   swept?: { session_id: string; amount_usdc: number };
+  /** Whether matched_listing_ids reflects a real keyword match against the
+   *  spec, or is just the cheapest active listings with nothing relevant
+   *  found — callers must not present a "fallback" pick as auto-selected
+   *  for relevance. See estimateSellerCost in lib/estimator/marketplace.ts. */
+  seller_match_type: "keyword" | "fallback";
 };
 
 function quoteFee(): number {
@@ -114,9 +119,15 @@ export async function submitQuoteRequest(
 
   // ── No active session: this is an original submission (free). ──
   if (!active) {
-    const session = await createSession(payerWalletId, spec);
+    const { session, match_type } = await createSession(payerWalletId, spec);
     await recordAttempt(session.id, 1, rawText, spec, "original", 0);
-    return { session, gate_result: "original", attempt_no: 1, charged_usdc: 0 };
+    return {
+      session,
+      gate_result: "original",
+      attempt_no: 1,
+      charged_usdc: 0,
+      seller_match_type: match_type,
+    };
   }
 
   const gate = evaluateGate(specOf(active), spec);
@@ -124,7 +135,7 @@ export async function submitQuoteRequest(
   // ── Gate failed: topic change. Sweep immediately, start a fresh session. ──
   if (!gate.pass) {
     const sweptAmount = await sweepSessionToTreasury(active, "swept");
-    const session = await createSession(payerWalletId, spec);
+    const { session, match_type } = await createSession(payerWalletId, spec);
     await recordAttempt(session.id, 1, rawText, spec, "topic_change", 0);
     return {
       session,
@@ -132,6 +143,7 @@ export async function submitQuoteRequest(
       attempt_no: 1,
       charged_usdc: 0,
       swept: { session_id: active.id, amount_usdc: sweptAmount },
+      seller_match_type: match_type,
     };
   }
 
@@ -195,6 +207,7 @@ export async function submitQuoteRequest(
     gate_result: gateResult,
     attempt_no: attemptNo,
     charged_usdc: charged,
+    seller_match_type: quote.match_type,
   };
 }
 
@@ -316,20 +329,21 @@ export async function sweepAbandonedSessions(): Promise<
  * derives the fee-inclusive quote figures from it.
  */
 async function quoteFor(spec: ParsedSpec): Promise<
-  GuaranteedQuote & { matched_listing_ids: string[] }
+  GuaranteedQuote & { matched_listing_ids: string[]; match_type: "keyword" | "fallback" }
 > {
-  const { seller_cost_estimate_usdc, matched_listing_ids } =
+  const { seller_cost_estimate_usdc, matched_listing_ids, match_type } =
     await estimateSellerCost(spec);
   return {
     ...computeGuaranteedQuote(seller_cost_estimate_usdc),
     matched_listing_ids,
+    match_type,
   };
 }
 
 async function createSession(
   payerWalletId: string,
   spec: ParsedSpec,
-): Promise<SessionRow> {
+): Promise<{ session: SessionRow; match_type: "keyword" | "fallback" }> {
   const supabase = createServiceSupabase();
   const quote = await quoteFor(spec);
   const { data, error } = await supabase
@@ -354,7 +368,7 @@ async function createSession(
   if (error || !data) {
     throw new Error(`Failed to create estimator session: ${error?.message}`);
   }
-  return data;
+  return { session: data, match_type: quote.match_type };
 }
 
 async function recordAttempt(

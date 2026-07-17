@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import Nav from "@/components/Nav";
 import { getSession } from "@/lib/session";
 import { getUserWallet } from "@/lib/circle-wallets";
@@ -28,9 +29,10 @@ export default async function TasksPage() {
               const role =
                 task.payer_wallet_id === wallet.id ? "Buyer" : "Seller";
               return (
-                <div
+                <Link
                   key={task.id}
-                  className="rounded-xl border border-zinc-800 bg-zinc-900 p-4"
+                  href={`/tasks/${task.id}`}
+                  className="block rounded-xl border border-zinc-800 bg-zinc-900 p-4 transition hover:border-zinc-700"
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div>
@@ -80,7 +82,7 @@ export default async function TasksPage() {
                       ))}
                     </div>
                   )}
-                </div>
+                </Link>
               );
             })}
           </div>

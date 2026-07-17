@@ -26,29 +26,65 @@ export async function ensureWalletSet(): Promise<string> {
 }
 
 /**
+ * Look up a previously created Circle wallet by its `metadata.refId` tag
+ * (set at creation, see `createArcWalletForUser`). Used by demo mode to
+ * reuse the same on-chain wallet across resets instead of minting a new one
+ * (and stranding faucet funds on the abandoned address) every time.
+ */
+async function findWalletByRefId(
+  refId: string,
+): Promise<{ id: string; address: string; blockchain?: string; accountType?: string } | null> {
+  const client = getDeveloperControlledWalletsClient();
+  const walletSetId = await ensureWalletSet();
+  const res = await client.listWallets({ refId, walletSetId });
+  const wallet = res.data?.wallets?.[0];
+  if (!wallet?.id || !wallet.address) return null;
+  return {
+    id: wallet.id,
+    address: wallet.address,
+    blockchain: wallet.blockchain,
+    accountType: wallet.accountType,
+  };
+}
+
+/**
  * Create one ARC-TESTNET SCA wallet for a user and persist it to Supabase.
  * Returns the stored wallet row. Assumes the user has no wallet yet (callers
  * should check first via getUserWallet).
+ *
+ * @param refId Optional stable reference tag (demo mode only). When set and
+ *   a Circle wallet already carries that tag, the existing on-chain wallet is
+ *   reused (only the Supabase row is (re)created) instead of minting a new
+ *   one. Real users never pass this — every real wallet is freshly minted.
  */
 export async function createArcWalletForUser(
   userId: string,
+  refId?: string,
 ): Promise<WalletRow> {
-  const client = getDeveloperControlledWalletsClient();
-  const walletSetId = await ensureWalletSet();
+  const supabase = createServiceSupabase();
+  let wallet: { id: string; address: string; blockchain?: string; accountType?: string } | undefined;
 
-  const res = await client.createWallets({
-    walletSetId,
-    blockchains: [CIRCLE_ARC_BLOCKCHAIN],
-    accountType: "SCA",
-    count: 1,
-  });
-
-  const wallet = res.data?.wallets?.[0];
-  if (!wallet?.id || !wallet.address) {
-    throw new Error("Circle did not return a wallet");
+  if (refId) {
+    wallet = (await findWalletByRefId(refId)) ?? undefined;
   }
 
-  const supabase = createServiceSupabase();
+  if (!wallet) {
+    const client = getDeveloperControlledWalletsClient();
+    const walletSetId = await ensureWalletSet();
+    const res = await client.createWallets({
+      walletSetId,
+      blockchains: [CIRCLE_ARC_BLOCKCHAIN],
+      accountType: "SCA",
+      count: 1,
+      ...(refId ? { metadata: [{ refId }] } : {}),
+    });
+    const created = res.data?.wallets?.[0];
+    if (!created?.id || !created.address) {
+      throw new Error("Circle did not return a wallet");
+    }
+    wallet = created;
+  }
+
   const { data, error } = await supabase
     .from("wallets")
     .insert({

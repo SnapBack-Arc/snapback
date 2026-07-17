@@ -2,6 +2,7 @@ import "server-only";
 import type { Address } from "viem";
 import { createServiceSupabase } from "@/lib/supabase/server";
 import { creditSessionToTask } from "@/lib/estimator/service";
+import { ARC_CHAIN_ID } from "@/lib/arc";
 import {
   createEscrowJob,
   setJobBudget,
@@ -138,7 +139,22 @@ export async function createAndFundTask(
   await waitForTxHash(setBudgetTxId);
 
   // 5. Buyer locks funds: approve then fund, both from the buyer wallet.
-  await lockFunds(buyerWallet.circle_wallet_id, jobId, amountUsdc);
+  const { fundId } = await lockFunds(buyerWallet.circle_wallet_id, jobId, amountUsdc);
+
+  // Record the lock itself — nothing else in this flow writes a payments row
+  // for the escrow lock, so without this the task detail page would have no
+  // Arcscan-linkable record of it ever happening.
+  const fundTxHash = fundId ? await waitForTxHash(fundId) : null;
+  await supabase.from("payments").insert({
+    task_id: task.id,
+    from_wallet_id: params.buyerWalletId,
+    kind: "escrow",
+    status: "escrowed",
+    amount_usdc: listing.price_usdc,
+    tx_hash: fundTxHash,
+    chain_id: ARC_CHAIN_ID,
+    metadata: { erc8183_job_id: jobId, reason: "task_funding_lock" },
+  });
 
   await supabase.from("tasks").update({ status: "in_progress" }).eq("id", task.id);
 

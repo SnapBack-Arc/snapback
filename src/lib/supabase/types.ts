@@ -21,6 +21,8 @@ export type PaymentRow = Tables["payments"]["Row"];
 export type DisputeRow = Tables["disputes"]["Row"];
 export type JudgeVoteRow = Tables["judge_votes"]["Row"];
 export type ReputationRow = Tables["reputation"]["Row"];
+export type ListingRow = Tables["listings"]["Row"];
+export type ValidationRow = Tables["validations"]["Row"];
 
 export type TaskStatus = Enums["task_status"];
 export type PaymentStatus = Enums["payment_status"];

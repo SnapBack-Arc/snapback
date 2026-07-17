@@ -1,3 +1,39 @@
+## SnapBack
+
+An agentic-economy escrow/payments demo on Arc Testnet: buyers describe a task in
+plain language, get a quote against Marketplace listings, fund an escrow-backed
+job, and the delivery goes through an automated buyer-agent validator with a
+judge-panel dispute path if it fails.
+
+### Simulated vs. real sellers
+
+The payment/escrow/dispute/judge infrastructure is fully real and live on Arc
+Testnet — real Circle wallets, real on-chain USDC locks, a real Claude-based
+validator, real dispute filing and settlement. **Most seller listings in the seed
+marketplace are simulated placeholder data**, though: they demonstrate that
+infrastructure working end-to-end, but nothing executes their side of the work.
+A task commissioned against one just sits funded until a deliverable is submitted
+by hand (e.g. via `POST /api/validate`).
+
+**Research & Sourcing is the one exception** — a genuine, non-simulated worker
+agent (`src/lib/agents/research-sourcing.ts`). Selecting it as a seller and
+clicking "Run agent" on the task detail page actually calls Claude with a real
+`web_search` tool, researches the request for real, and submits a structured
+deliverable (sourced findings with confidence notes) built only from sources it
+actually found. That deliverable flows through the exact same validator →
+approve/dispute → settlement pipeline (`runValidation` in
+`src/lib/validator-service.ts`) that any other seller's submission would — there
+is no special-casing in that pipeline. The only place this listing is treated
+differently is the trigger itself: `src/app/api/tasks/[id]/deliver/route.ts`
+checks for a `sla.agent === "research-sourcing"` marker on the listing before
+invoking the worker (see `src/lib/listing-agents.ts`).
+
+Adding another real worker for a different listing means writing an equivalent
+agent module and marking its listing the same way — the validation/dispute/
+settlement side needs no changes to support it.
+
+---
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started
