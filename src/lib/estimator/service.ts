@@ -115,12 +115,30 @@ export async function submitQuoteRequest(
   const supabase = createServiceSupabase();
   const spec = await parseSpec(rawText);
 
-  const { data: active } = await supabase
+  const { data: fetched } = await supabase
     .from("estimator_sessions")
     .select("*")
     .eq("payer_wallet_id", payerWalletId)
     .eq("status", "active")
     .maybeSingle();
+
+  // Check-on-next-request: there is no cron/keeper driving
+  // sweepAbandonedSessions() automatically (see README "Event-driven
+  // state"), so the abandonment sweep has to happen somewhere honest
+  // instead of silently never happening. This is that somewhere — the next
+  // time this buyer submits *any* quote request, a session idle past
+  // ABANDONMENT_MINUTES is swept and treated as if it no longer exists,
+  // exactly like sweepAbandonedSessions() would have. The admin "sweep all
+  // abandoned now" button (lib/admin-actions.ts) remains the manual
+  // fallback for a session whose buyer never comes back at all.
+  let active = fetched;
+  if (active) {
+    const idleMinutes = (Date.now() - new Date(active.last_activity_at).getTime()) / 60_000;
+    if (idleMinutes >= ABANDONMENT_MINUTES) {
+      await sweepSessionToTreasury(active, "abandoned");
+      active = null;
+    }
+  }
 
   // ── No active session: this is an original submission (free). ──
   if (!active) {

@@ -60,6 +60,72 @@ the general `/marketplace` browse page still lists every seed listing (with
 its own "Real agent" badge), since browsing inventory and picking a candidate
 for a specific task are different concerns.
 
+### Event-driven state (no keeper/cron)
+
+Nothing schedules quote-escrow sweeps, validator runs, or judge draws — there
+is no cron/keeper process anywhere in this app. Instead, on-chain state is
+observed via Circle Contract Event Monitoring + wallet transaction webhooks,
+delivered to a single receiver: `src/app/api/webhooks/circle/route.ts`. It
+verifies `X-Circle-Signature` (`src/lib/webhooks/signature.ts`) before trusting
+anything, then dispatches by `notificationType`
+(`src/lib/webhooks/handle-notification.ts`):
+
+- `contracts.eventLog` — SnapBackEscrow/JudgeRegistry events, decoded against
+  the ABI fragments in `src/lib/webhooks/events.ts`. This is what confirms an
+  on-chain action actually took effect (funded, submitted, released, disputed,
+  refunded, judge votes/verdicts) and reconciles `payments`/`tasks` status
+  accordingly. Every observed event is also logged to `job_events`, which the
+  task detail page renders as a small on-chain activity feed.
+- `transactions.*` — wallet-level tx status, correlated against `payments`
+  rows that carry a `circle_tx_id` (today: `lib/x402.ts`, the Gateway deposit
+  route). Used to catch a transaction that actually failed on-chain (flips
+  `payments.status` to `'failed'` instead of leaving it silently stuck
+  `'escrowed'`/`'pending'` forever) and to backfill `tx_hash`.
+
+**JudgeRegistry's panel-draw is observed, never triggered.** `selectPanel()`
+is `onlyOwner`, gated by a local Foundry deployer keystore (`--account
+snapback-deployer --password-file ...`) — not a Circle-managed wallet — and
+the real judge pool has zero staked judges today, so the call would revert
+regardless. The webhook reflects `PanelSelected`/`VoteCast`/`VerdictReached`
+if they ever fire, but never calls `selectPanel` itself; the admin dashboard's
+"force-resolve dispute" action remains the real, live path for a stuck
+dispute.
+
+**The task detail stepper** updates live from webhook-driven `job_events`/
+`payments` writes, with a client-side poll (`TaskLiveUpdates`, 6s, only while
+the task isn't in a settled stage) as the fallback for a delayed or missed
+delivery — Circle's webhooks are at-least-once but not guaranteed instant.
+
+**The 15-minute session-abandonment sweep** has no on-chain event to key off
+(it's a pure time-based idle check on an off-chain `estimator_sessions` row).
+Rather than leave it silently unscheduled, `submitQuoteRequest`
+(`src/lib/estimator/service.ts`) checks the buyer's own active session's age
+every time they submit *any* quote request and sweeps it first if it's past
+the abandonment window — the same outcome a cron would produce, triggered by
+the next natural touchpoint instead. A session whose buyer never comes back at
+all stays un-swept until an admin clicks "Sweep all abandoned now"
+(`/admin`) — a known, accepted limitation of check-on-next-request over cron.
+
+**Setup** — `npm run webhooks:setup` (see `scripts/circle-webhooks-setup.ts`
+for the full flow: registers the notification subscription, imports both
+contracts into Circle Contracts, creates one event monitor per event). It's
+idempotent, so re-running it after the public URL changes just updates the
+subscription's endpoint. Webhooks require a publicly reachable HTTPS URL —
+there's no Vercel deployment yet, so for now:
+
+```bash
+npm run dev              # terminal 1
+ngrok http 3000          # terminal 2 — copy the https:// forwarding URL
+WEBHOOK_PUBLIC_URL=https://<your-subdomain>.ngrok-free.app npm run webhooks:setup
+```
+
+Re-run the last command whenever the ngrok URL changes (a new `ngrok http`
+session gets a new random subdomain on the free tier). Once this app has a
+real Vercel deployment, set `WEBHOOK_PUBLIC_URL` to that deployment's URL
+instead and re-run the setup script once per domain change — preview URLs
+rotate per-deploy, so this is a production/custom-domain-only setup, not
+something to re-run per preview.
+
 ---
 
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).

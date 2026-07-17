@@ -27,6 +27,8 @@ export type AdminAuditLogRow = Tables["admin_audit_log"]["Row"];
 export type WalletFlagRow = Tables["wallet_flags"]["Row"];
 export type InsurancePoolAdjustmentRow = Tables["insurance_pool_adjustments"]["Row"];
 export type BuyerDisputeStatsRow = Tables["buyer_dispute_stats"]["Row"];
+export type JobEventRow = Tables["job_events"]["Row"];
+export type WebhookNotificationLogRow = Tables["webhook_notifications_log"]["Row"];
 
 export type TaskStatus = Enums["task_status"];
 export type PaymentStatus = Enums["payment_status"];

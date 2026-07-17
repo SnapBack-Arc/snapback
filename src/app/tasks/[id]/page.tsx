@@ -10,6 +10,7 @@ import type { DisputeRow, JudgeVoteRow } from "@/lib/supabase/types";
 import type { EducationalFeedback } from "@/lib/disputes/feedback";
 import AgentRoster, { AGENT_COLOR, type AgentEntry } from "@/components/AgentRoster";
 import DeliverButton from "@/components/DeliverButton";
+import TaskLiveUpdates from "@/components/TaskLiveUpdates";
 import { isResearchSourcingListing } from "@/lib/listing-agents";
 
 type Stage = "quoted" | "escrowed" | "validated" | "approved" | "disputed" | "settled";
@@ -366,6 +367,7 @@ export default async function TaskDetailPage({
   return (
     <main className="min-h-screen bg-zinc-950">
       <Nav email={session.email} />
+      <TaskLiveUpdates active={stage !== "settled"} />
       <div className="mx-auto max-w-3xl space-y-6 p-6">
         <div>
           <Link href="/tasks" className="text-sm text-zinc-500 hover:text-zinc-300">
@@ -398,6 +400,28 @@ export default async function TaskDetailPage({
             <p className="mt-3 text-xs text-zinc-500">
               SnapBackEscrow job id: <span className="font-mono text-zinc-400">{jobId}</span>
             </p>
+          )}
+          {task.jobEvents.length > 0 && (
+            <ul className="mt-3 space-y-1 border-t border-zinc-800 pt-3">
+              {task.jobEvents.map((e) => (
+                <li key={e.id} className="flex items-center justify-between gap-3 text-xs text-zinc-500">
+                  <span>
+                    <span className="font-mono text-zinc-300">{e.event_name}</span>
+                    {" "}on-chain · {formatDate(e.created_at)}
+                  </span>
+                  {e.tx_hash && (
+                    <a
+                      href={explorerTxUrl(e.tx_hash)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-emerald-400 hover:underline"
+                    >
+                      tx
+                    </a>
+                  )}
+                </li>
+              ))}
+            </ul>
           )}
         </section>
 

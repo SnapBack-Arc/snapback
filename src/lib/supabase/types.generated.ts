@@ -385,6 +385,50 @@ export type Database = {
           },
         ]
       }
+      job_events: {
+        Row: {
+          block_height: number | null
+          contract: string
+          created_at: string
+          event_name: string
+          id: string
+          job_id: string
+          payload: Json
+          task_id: string | null
+          tx_hash: string | null
+        }
+        Insert: {
+          block_height?: number | null
+          contract: string
+          created_at?: string
+          event_name: string
+          id?: string
+          job_id: string
+          payload?: Json
+          task_id?: string | null
+          tx_hash?: string | null
+        }
+        Update: {
+          block_height?: number | null
+          contract?: string
+          created_at?: string
+          event_name?: string
+          id?: string
+          job_id?: string
+          payload?: Json
+          task_id?: string | null
+          tx_hash?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "job_events_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       judge_votes: {
         Row: {
           choice: Database["public"]["Enums"]["vote_choice"]
@@ -958,6 +1002,33 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      webhook_notifications_log: {
+        Row: {
+          error: string | null
+          notification_id: string
+          notification_type: string
+          processed_at: string | null
+          received_at: string
+          status: string
+        }
+        Insert: {
+          error?: string | null
+          notification_id: string
+          notification_type: string
+          processed_at?: string | null
+          received_at?: string
+          status?: string
+        }
+        Update: {
+          error?: string | null
+          notification_id?: string
+          notification_type?: string
+          processed_at?: string | null
+          received_at?: string
+          status?: string
+        }
+        Relationships: []
       }
     }
     Views: {

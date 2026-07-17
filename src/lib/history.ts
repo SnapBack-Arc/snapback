@@ -7,6 +7,7 @@ import type {
   TaskRow,
   JudgeVoteRow,
   ValidationRow,
+  JobEventRow,
 } from "@/lib/supabase/types";
 
 export type TaskWithRelations = TaskRow & {
@@ -20,6 +21,8 @@ export type TaskDetail = TaskRow & {
   payments: PaymentRow[];
   validations: ValidationRow[];
   listings: { title: string; sla: unknown } | null;
+  /** Decoded on-chain events observed via the Circle webhook receiver (lib/webhooks/*). */
+  jobEvents: JobEventRow[];
 };
 
 /**
@@ -50,7 +53,7 @@ export async function getTaskById(
     return null;
   }
 
-  const [{ data: payments }, { data: validations }] = await Promise.all([
+  const [{ data: payments }, { data: validations }, { data: jobEvents }] = await Promise.all([
     supabase
       .from("payments")
       .select("*")
@@ -61,12 +64,18 @@ export async function getTaskById(
       .select("*")
       .eq("task_id", taskId)
       .order("created_at", { ascending: true }),
+    supabase
+      .from("job_events")
+      .select("*")
+      .eq("task_id", taskId)
+      .order("created_at", { ascending: true }),
   ]);
 
   return {
     ...task,
     payments: payments ?? [],
     validations: validations ?? [],
+    jobEvents: jobEvents ?? [],
   } as TaskDetail;
 }
 

@@ -28,6 +28,10 @@ const FEE = { type: "level" as const, config: { feeLevel: "MEDIUM" as const } };
 export const SNAPBACK_ESCROW = (process.env.NEXT_PUBLIC_SNAPBACK_ESCROW ??
   "0x73D35909D28b79a5F88DC5fDBA82EcBbe7C18Ee8") as Address;
 
+/** JudgeRegistry — SnapBackEscrow's arbiter. Used by lib/webhooks/* to attribute decoded events. */
+export const JUDGE_REGISTRY = (process.env.NEXT_PUBLIC_JUDGE_REGISTRY ??
+  "0x740724012b7502D708e41c89D00AF7cDd63A20C9") as Address;
+
 const SIG = {
   createJob: "createJob(address,uint64,string)",
   setBudget: "setBudget(uint256,uint256)",
