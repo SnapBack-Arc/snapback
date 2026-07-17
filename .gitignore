@@ -39,3 +39,14 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Circle entity-secret recovery files (NEVER commit)
+.circle/
+
+# Foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+
+# Supabase CLI local cache/link state
+supabase/.temp/

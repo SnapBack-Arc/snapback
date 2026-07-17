@@ -1,0 +1,7 @@
+{
+  "servers": {
+    "arc-docs": {
+      "url": "https://docs.arc.io/mcp"
+    }
+  }
+}
