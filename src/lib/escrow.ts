@@ -5,45 +5,42 @@ import { publicClient } from "@/lib/viem";
 import { ARC_USDC_ADDRESS, USDC_DECIMALS } from "@/lib/arc";
 
 /**
- * Task escrow on ERC-8183.
+ * Task escrow — standalone SnapBackEscrow, not an ERC-8183/AgenticCommerce
+ * hook anymore.
  *
- * SnapBackEscrow is an ERC-8183 *hook* — it holds no funds. The "lock" is
- * `AgenticCommerce.fund(jobId)` on a job created with `hook = SnapBackEscrow`,
- * so USDC lands in the audited ERC-8183 escrow rather than on the seller. It
- * only leaves on validator auto-approve (`complete`) or judge settlement
- * (`resolveDispute`), which is exactly the snapback guarantee.
+ * ARCHITECTURE CHANGE: every real createJob call against AgenticCommerce
+ * (hook = SnapBackEscrow) reverted with HookNotWhitelisted() — verified
+ * on-chain that AgenticCommerce's ADMIN_ROLE is held by a third-party
+ * address (also its platformTreasury()), not anything we control, and no
+ * self-service whitelisting path exists in the Arc docs. SnapBackEscrow is
+ * now a standalone contract that holds USDC directly: buyer and seller
+ * wallets call it (createJob/setBudget/fund/submit/release/dispute)
+ * directly, with no external job-settlement contract in the loop. See
+ * contracts/src/SnapBackEscrow.sol for the full contract-level story.
  *
  * Every `*CircleWalletId` param below is Circle's own wallet id
- * (`wallets.circle_wallet_id`) — NOT this app's internal `wallets.id` primary
- * key. Passing the internal id 404s against Circle's API. Every function here
- * used to take a bare `walletId` and nothing that called them ever passed the
- * right one (confirmed against the real deployed contracts — see
- * setJobBudget below); the param names are explicit now to make that mistake
- * harder to repeat.
+ * (`wallets.circle_wallet_id`) — NOT this app's internal `wallets.id`
+ * primary key. Passing the internal id 404s against Circle's API.
  */
 
 const FEE = { type: "level" as const, config: { feeLevel: "MEDIUM" as const } };
 
-export const AGENTIC_COMMERCE = (process.env.NEXT_PUBLIC_ARC_AGENTIC_COMMERCE ??
-  "0x0747EEf0706327138c69792bF28Cd525089e4583") as Address;
-
 export const SNAPBACK_ESCROW = (process.env.NEXT_PUBLIC_SNAPBACK_ESCROW ??
-  "0x1f0c71FEBb5082e61785e17d7Be38Dfd23Eee9Cf") as Address;
+  "0x73D35909D28b79a5F88DC5fDBA82EcBbe7C18Ee8") as Address;
 
 const SIG = {
-  createJob: "createJob(address,address,uint256,string,address)",
-  setBudget: "setBudget(uint256,uint256,bytes)",
+  createJob: "createJob(address,uint64,string)",
+  setBudget: "setBudget(uint256,uint256)",
   approve: "approve(address,uint256)",
-  fund: "fund(uint256,bytes)",
-  submit: "submit(uint256,bytes32,bytes)",
+  fund: "fund(uint256)",
+  submit: "submit(uint256,bytes32)",
 } as const;
 
 /**
- * JobCreated event, transcribed from AgenticCommerce's verified implementation
- * source (`cast source --chain arc-testnet <impl address>` against the live
- * ERC-1967 proxy) — not guessed, since decoding a job-creation receipt against
- * the wrong signature could silently misattribute a jobId used in every
- * subsequent fund/submit/release call.
+ * JobCreated event — transcribed directly from contracts/src/SnapBackEscrow.sol,
+ * not guessed, since decoding a job-creation receipt against the wrong
+ * signature could silently misattribute a jobId used in every subsequent
+ * fund/submit/release call.
  */
 const JOB_CREATED_EVENT = {
   type: "event",
@@ -52,9 +49,8 @@ const JOB_CREATED_EVENT = {
     { name: "jobId", type: "uint256", indexed: true },
     { name: "client", type: "address", indexed: true },
     { name: "provider", type: "address", indexed: true },
-    { name: "evaluator", type: "address", indexed: false },
-    { name: "expiredAt", type: "uint256", indexed: false },
-    { name: "hook", type: "address", indexed: false },
+    { name: "expiredAt", type: "uint64", indexed: false },
+    { name: "description", type: "string", indexed: false },
   ],
 } as const;
 
@@ -71,14 +67,14 @@ export async function waitForTxHash(circleTxId: string): Promise<Hash> {
 
 /**
  * Recovers the on-chain jobId from a `createJob` transaction's receipt.
- * `AgenticCommerce.createJob` assigns jobs a sequential counter and only
+ * SnapBackEscrow.createJob assigns jobs a sequential counter and only
  * exposes the new id via the `JobCreated` event — there is no return-value
  * path through a Circle contract-execution transaction.
  */
 export async function getJobIdFromTxHash(txHash: Hash): Promise<string> {
   const receipt = await publicClient.getTransactionReceipt({ hash: txHash });
   const logs = receipt.logs.filter(
-    (log) => log.address.toLowerCase() === AGENTIC_COMMERCE.toLowerCase(),
+    (log) => log.address.toLowerCase() === SNAPBACK_ESCROW.toLowerCase(),
   );
   const [event] = parseEventLogs({
     abi: [JOB_CREATED_EVENT],
@@ -91,29 +87,22 @@ export async function getJobIdFromTxHash(txHash: Hash): Promise<string> {
 }
 
 /**
- * Create an ERC-8183 job wired to the SnapBackEscrow hook.
+ * Buyer commissions a job directly on SnapBackEscrow. No funds move yet.
  * @returns the Circle transaction id — call waitForTxHash + getJobIdFromTxHash
  * to recover the on-chain jobId once it confirms.
  */
 export async function createEscrowJob(params: {
   buyerCircleWalletId: string;
   sellerAddress: Address;
-  evaluatorAddress: Address;
   expiredAt: number; // unix seconds
   description: string;
 }): Promise<string | undefined> {
   const client = getDeveloperControlledWalletsClient();
   const res = await client.createContractExecutionTransaction({
     walletId: params.buyerCircleWalletId,
-    contractAddress: AGENTIC_COMMERCE,
+    contractAddress: SNAPBACK_ESCROW,
     abiFunctionSignature: SIG.createJob,
-    abiParameters: [
-      params.sellerAddress,
-      params.evaluatorAddress,
-      String(params.expiredAt),
-      params.description,
-      SNAPBACK_ESCROW, // ← the hook: snapback semantics attach here
-    ],
+    abiParameters: [params.sellerAddress, String(params.expiredAt), params.description],
     fee: FEE,
   });
   return res.data?.id;
@@ -121,12 +110,8 @@ export async function createEscrowJob(params: {
 
 /**
  * Set the job budget before funding.
- *
- * @dev Per the deployed AgenticCommerce.setBudget: `msg.sender != job.provider`
- *      reverts Unauthorized — this MUST be called with the seller's wallet,
- *      not the buyer's (verified against the live contract's source; this
- *      param used to be misnamed `buyerWalletId` and would have reverted if
- *      ever actually invoked — nothing called it before now).
+ * @dev setBudget is gated to job.provider on-chain — MUST be called with the
+ *      seller's wallet, not the buyer's.
  */
 export async function setJobBudget(
   sellerCircleWalletId: string,
@@ -136,17 +121,28 @@ export async function setJobBudget(
   const client = getDeveloperControlledWalletsClient();
   const res = await client.createContractExecutionTransaction({
     walletId: sellerCircleWalletId,
-    contractAddress: AGENTIC_COMMERCE,
+    contractAddress: SNAPBACK_ESCROW,
     abiFunctionSignature: SIG.setBudget,
-    abiParameters: [jobId, parseUnits(amountUsdc, USDC_DECIMALS).toString(), "0x"],
+    abiParameters: [jobId, parseUnits(amountUsdc, USDC_DECIMALS).toString()],
     fee: FEE,
   });
   return res.data?.id;
 }
 
 /**
- * THE LOCK: approve USDC to AgenticCommerce, then fund the job.
- * After this, the budget is escrowed — the seller cannot be paid directly.
+ * THE LOCK: approve USDC to SnapBackEscrow, then fund the job.
+ * After this, the budget is escrowed in this contract itself — the seller
+ * cannot be paid directly.
+ *
+ * @dev MUST wait for approve to actually confirm on-chain before submitting
+ *      fund. A prior version of this function assumed same-wallet
+ *      sequential Circle transactions were "nonce-ordered" and skipped the
+ *      wait — true for on-chain *mining* order, but Circle estimates gas
+ *      for fund at *submission* time, before approve has been mined, so it
+ *      simulates against a stale zero allowance and rejects the fund
+ *      transaction outright (INSUFFICIENT_TOKEN: transfer amount exceeds
+ *      allowance) — verified by hitting this for real once the standalone
+ *      contract made it possible to reach this step at all.
  */
 export async function lockFunds(
   buyerCircleWalletId: string,
@@ -160,15 +156,18 @@ export async function lockFunds(
     walletId: buyerCircleWalletId,
     contractAddress: ARC_USDC_ADDRESS,
     abiFunctionSignature: SIG.approve,
-    abiParameters: [AGENTIC_COMMERCE, base],
+    abiParameters: [SNAPBACK_ESCROW, base],
     fee: FEE,
   });
+  if (approve.data?.id) {
+    await waitForTxHash(approve.data.id);
+  }
 
   const fund = await client.createContractExecutionTransaction({
     walletId: buyerCircleWalletId,
-    contractAddress: AGENTIC_COMMERCE,
+    contractAddress: SNAPBACK_ESCROW,
     abiFunctionSignature: SIG.fund,
-    abiParameters: [jobId, "0x"],
+    abiParameters: [jobId],
     fee: FEE,
   });
 
@@ -184,18 +183,31 @@ export async function submitDeliverable(
   const client = getDeveloperControlledWalletsClient();
   const res = await client.createContractExecutionTransaction({
     walletId: sellerCircleWalletId,
-    contractAddress: AGENTIC_COMMERCE,
+    contractAddress: SNAPBACK_ESCROW,
     abiFunctionSignature: SIG.submit,
-    abiParameters: [jobId, deliverableHash, "0x"],
+    abiParameters: [jobId, deliverableHash],
     fee: FEE,
   });
   return res.data?.id;
 }
 
-/** Hook-side calls: auto-approve (release) or open a dispute. */
+/**
+ * Buyer-agent calls: approve+release now, or open a dispute freezing
+ * auto-release. Both are gated `onlyClient` on-chain, so `circleWalletId`
+ * must be the buyer's own wallet — matches how the app already signs these
+ * (the buyer agent acting on the buyer's behalf), not a separate
+ * "evaluator" role.
+ *
+ * `release` replaces what used to be a broken call to `autoRelease` on
+ * validator approval: autoRelease unconditionally requires the accept
+ * window to have already elapsed (it's the keeper/timeout path), so calling
+ * it immediately after a fresh submission — which is exactly when the
+ * validator runs — would always have reverted. `release` is the actual
+ * "buyer approved early" path; see SnapBackEscrow.sol's docblock.
+ */
 export async function escrowAction(
   circleWalletId: string,
-  fn: "autoRelease(uint256)" | "dispute(uint256,bytes32)",
+  fn: "release(uint256,bytes32)" | "dispute(uint256,bytes32)",
   args: string[],
 ): Promise<string | undefined> {
   const client = getDeveloperControlledWalletsClient();
@@ -204,6 +216,27 @@ export async function escrowAction(
     contractAddress: SNAPBACK_ESCROW,
     abiFunctionSignature: fn,
     abiParameters: args,
+    fee: FEE,
+  });
+  return res.data?.id;
+}
+
+/**
+ * Permissionless keeper call once the accept window lapses — nothing in the
+ * app currently schedules this (no cron/keeper route exists yet, same as
+ * before this rewrite), but the contract supports it and any wallet can
+ * call it, matching the original "keeper autoRelease" guarantee.
+ */
+export async function triggerAutoRelease(
+  callerCircleWalletId: string,
+  jobId: string,
+): Promise<string | undefined> {
+  const client = getDeveloperControlledWalletsClient();
+  const res = await client.createContractExecutionTransaction({
+    walletId: callerCircleWalletId,
+    contractAddress: SNAPBACK_ESCROW,
+    abiFunctionSignature: "autoRelease(uint256)",
+    abiParameters: [jobId],
     fee: FEE,
   });
   return res.data?.id;

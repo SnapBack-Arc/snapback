@@ -396,7 +396,7 @@ export default async function TaskDetailPage({
           <Stepper stage={stage} />
           {jobId && (
             <p className="mt-3 text-xs text-zinc-500">
-              ERC-8183 job id: <span className="font-mono text-zinc-400">{jobId}</span>
+              SnapBackEscrow job id: <span className="font-mono text-zinc-400">{jobId}</span>
             </p>
           )}
         </section>

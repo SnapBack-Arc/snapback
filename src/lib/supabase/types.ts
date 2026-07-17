@@ -23,6 +23,10 @@ export type JudgeVoteRow = Tables["judge_votes"]["Row"];
 export type ReputationRow = Tables["reputation"]["Row"];
 export type ListingRow = Tables["listings"]["Row"];
 export type ValidationRow = Tables["validations"]["Row"];
+export type AdminAuditLogRow = Tables["admin_audit_log"]["Row"];
+export type WalletFlagRow = Tables["wallet_flags"]["Row"];
+export type InsurancePoolAdjustmentRow = Tables["insurance_pool_adjustments"]["Row"];
+export type BuyerDisputeStatsRow = Tables["buyer_dispute_stats"]["Row"];
 
 export type TaskStatus = Enums["task_status"];
 export type PaymentStatus = Enums["payment_status"];
@@ -31,3 +35,5 @@ export type DisputeStatus = Enums["dispute_status"];
 export type DisputeOutcome = Enums["dispute_outcome"];
 export type VoteChoice = Enums["vote_choice"];
 export type WalletControl = Enums["wallet_control"];
+export type AdminAction = Enums["admin_action"];
+export type InsurancePoolDirection = Enums["insurance_pool_direction"];

@@ -595,7 +595,14 @@ const BASELINE_LISTINGS: {
   {
     title: "Research & Sourcing",
     description: "Real research: finds and compares sources, suppliers, or vendors for your request using live web search, delivered as a sourced findings list with confidence notes per source.",
-    price_usdc: 25,
+    // Baseline/display price only — a Claude call + a few web searches costs
+    // fractions of a cent to low tens of cents, nowhere near a flat $25.
+    // What a buyer is actually charged is computed per-task from difficulty
+    // + scope_quantity at quote and submission time (see
+    // lib/agents/research-sourcing-pricing.ts); this value is just what
+    // shows on the general /marketplace browse listing and feeds the
+    // Estimator's blended cost average, priced for a moderate/typical task.
+    price_usdc: 0.15,
     // `agent: "research-sourcing"` is the marker checked by
     // /api/tasks/[id]/deliver and the task detail page: this is the ONE
     // listing in the seed marketplace backed by a genuine, non-simulated

@@ -1,6 +1,7 @@
 import "server-only";
 import { createServiceSupabase } from "@/lib/supabase/server";
 import { computeFilingFee, recordDisputeFiling } from "@/lib/disputes/service";
+import { isWalletFlagged } from "@/lib/wallet-flags";
 
 /**
  * Post-approval contest filing.
@@ -32,6 +33,10 @@ export async function filePostApprovalContest(
   buyerWalletId: string,
   reason: string,
 ): Promise<ContestFilingResult> {
+  if (await isWalletFlagged(buyerWalletId)) {
+    throw new Error("This account is paused by an administrator and can't file contests.");
+  }
+
   const supabase = createServiceSupabase();
 
   const { data: task } = await supabase.from("tasks").select("*").eq("id", taskId).single();

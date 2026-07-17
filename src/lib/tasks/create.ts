@@ -3,33 +3,33 @@ import type { Address } from "viem";
 import { createServiceSupabase } from "@/lib/supabase/server";
 import { creditSessionToTask } from "@/lib/estimator/service";
 import { ARC_CHAIN_ID } from "@/lib/arc";
+import { isResearchSourcingListing } from "@/lib/listing-agents";
+import { estimateResearchSourcingCostUsdc } from "@/lib/agents/research-sourcing-pricing";
+import { isWalletFlagged } from "@/lib/wallet-flags";
 import {
   createEscrowJob,
   setJobBudget,
   lockFunds,
   waitForTxHash,
   getJobIdFromTxHash,
-  SNAPBACK_ESCROW,
 } from "@/lib/escrow";
 
 /**
  * Buyer commissions a task from an accepted Marketplace listing: creates the
  * `tasks` row, credits the Estimator's quote-phase escrow toward it, then
- * creates and funds the matching ERC-8183 job on-chain.
+ * creates and funds the matching job directly on SnapBackEscrow.
  *
  * This is the flow every other piece of SnapBack assumes exists (the
  * Estimator's `creditSessionToTask`, the validator's `tasks.metadata.
  * erc8183_job_id` lookup) but that nothing wired end-to-end before now.
  *
- * IMPORTANT — two things outside this code currently block the on-chain
- * steps from succeeding against the live testnet deployment:
- *   1. SnapBackEscrow must declare ERC-165 support for IACPHook (fixed in
- *      contracts/src/SnapBackEscrow.sol, but the deployed contract needs to
- *      be redeployed for the fix to take effect on-chain).
- *   2. Even after redeploying, the new SnapBackEscrow address must be
- *      whitelisted as a hook by AgenticCommerce's ADMIN_ROLE holder — a
- *      separate, shared contract this project does not administer.
- * See the redeploy/whitelist note surfaced alongside this feature.
+ * This used to create the job on AgenticCommerce with SnapBackEscrow as an
+ * ERC-8183 hook — every real call reverted with HookNotWhitelisted(),
+ * verified on-chain to be gated by a third-party admin role this project
+ * doesn't control, with no documented self-service whitelisting path.
+ * SnapBackEscrow is now standalone (contracts/src/SnapBackEscrow.sol): the
+ * job is created directly on it, no external job-settlement contract or
+ * "evaluator" role is involved.
  */
 
 const DEFAULT_JOB_EXPIRY_DAYS = 7;
@@ -52,6 +52,10 @@ export type CreateTaskResult = {
 export async function createAndFundTask(
   params: CreateTaskParams,
 ): Promise<CreateTaskResult> {
+  if (await isWalletFlagged(params.buyerWalletId)) {
+    throw new Error("This account is paused by an administrator and can't fund new tasks.");
+  }
+
   const supabase = createServiceSupabase();
 
   const { data: listing } = await supabase
@@ -77,7 +81,25 @@ export async function createAndFundTask(
     .single();
   if (!sellerWallet) throw new Error("Seller wallet not found");
 
-  const amountUsdc = String(listing.price_usdc);
+  // Research & Sourcing's listing price is a real, dynamically-computed
+  // amount (see research-sourcing-pricing.ts) driven by this task's own
+  // difficulty/scope_quantity, not the listing's static seed price — a
+  // small, easy request and a large, complex one genuinely cost different
+  // amounts to actually run. Every other listing is simulated inventory
+  // with no execution behind it, so its static price_usdc is used as-is.
+  let priceUsdc = Number(listing.price_usdc);
+  if (isResearchSourcingListing(listing.sla)) {
+    const { data: session } = await supabase
+      .from("estimator_sessions")
+      .select("difficulty, scope_quantity")
+      .eq("id", params.estimatorSessionId)
+      .single();
+    if (!session) {
+      throw new Error("Estimator session not found for Research & Sourcing pricing");
+    }
+    priceUsdc = estimateResearchSourcingCostUsdc(session.difficulty, session.scope_quantity);
+  }
+  const amountUsdc = String(priceUsdc);
 
   // 1. Task row — amount_usdc is the seller's quoted amount. The fee-inclusive
   //    guaranteed_total_usdc/disclosed_contingent_fee_pct land on it next.
@@ -91,7 +113,7 @@ export async function createAndFundTask(
       title: params.title,
       description: params.description ?? null,
       status: "assigned",
-      amount_usdc: listing.price_usdc,
+      amount_usdc: priceUsdc,
     })
     .select()
     .single();
@@ -104,16 +126,11 @@ export async function createAndFundTask(
   //    happy-path skim is charged separately, to Treasury, in that call.
   await creditSessionToTask(params.estimatorSessionId, task.id);
 
-  // 3. Create the ERC-8183 job. `evaluator` MUST be SnapBackEscrow itself,
-  //    not the buyer — AgenticCommerce.complete()/reject() are gated to
-  //    `msg.sender == job.evaluator`, and SnapBackEscrow calls those directly
-  //    as its own contract identity (verified against the live contract
-  //    source; this is not documented anywhere in this repo).
+  // 3. Create the job directly on SnapBackEscrow.
   const expiredAt = Math.floor(Date.now() / 1000) + DEFAULT_JOB_EXPIRY_DAYS * 86_400;
   const createTxId = await createEscrowJob({
     buyerCircleWalletId: buyerWallet.circle_wallet_id,
     sellerAddress: sellerWallet.address as Address,
-    evaluatorAddress: SNAPBACK_ESCROW,
     expiredAt,
     description: params.title,
   });
@@ -130,10 +147,10 @@ export async function createAndFundTask(
     .eq("id", task.id);
 
   // 4. Seller sets the budget — setBudget is gated to job.provider on-chain.
-  //    Must confirm before the buyer funds: unlike the approve→fund pair
-  //    below (same wallet, nonce-ordered), this and the next step are
-  //    different wallets, so only an explicit wait prevents fund() from
-  //    landing first and escrowing a zero budget.
+  //    Must confirm before the buyer funds, same reason lockFunds itself now
+  //    waits between its own approve and fund calls: Circle estimates gas
+  //    for the next call at submission time, against whatever's already
+  //    mined — an unconfirmed prior step reads as if it never happened.
   const setBudgetTxId = await setJobBudget(sellerWallet.circle_wallet_id, jobId, amountUsdc);
   if (!setBudgetTxId) throw new Error("setBudget transaction did not return an id");
   await waitForTxHash(setBudgetTxId);
@@ -150,7 +167,7 @@ export async function createAndFundTask(
     from_wallet_id: params.buyerWalletId,
     kind: "escrow",
     status: "escrowed",
-    amount_usdc: listing.price_usdc,
+    amount_usdc: priceUsdc,
     tx_hash: fundTxHash,
     chain_id: ARC_CHAIN_ID,
     metadata: { erc8183_job_id: jobId, reason: "task_funding_lock" },
@@ -158,5 +175,5 @@ export async function createAndFundTask(
 
   await supabase.from("tasks").update({ status: "in_progress" }).eq("id", task.id);
 
-  return { task_id: task.id, job_id: jobId, amount_usdc: Number(listing.price_usdc) };
+  return { task_id: task.id, job_id: jobId, amount_usdc: priceUsdc };
 }

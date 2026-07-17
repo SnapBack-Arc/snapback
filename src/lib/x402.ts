@@ -9,12 +9,15 @@ import type { Address } from "viem";
  *
  * Default x402 settles a payment authorization straight to the resource
  * server (here: the seller). SnapBack intercepts that step: settlement instead
- * creates + funds an ERC-8183 job hooked to SnapBackEscrow, so the seller is
- * never paid on authorization alone. Release requires validator auto-approve or
- * a judge verdict.
+ * creates + funds a job directly on the standalone SnapBackEscrow, so the
+ * seller is never paid on authorization alone. Release requires validator
+ * approval (release) or a judge verdict (resolveDispute).
  *
  * Scope: one escrow lock per task (not per-call metering). Quote-phase fees are
  * a separate concern — see lib/estimator (QuoteEscrow), untouched by this path.
+ *
+ * Note: unused anywhere in the app currently (grepped — no callers). Kept in
+ * sync with lib/escrow.ts's interface anyway rather than left to bit-rot.
  */
 
 export type SettlementResult = {
@@ -28,7 +31,7 @@ export type SettlementResult = {
 /**
  * Settle an x402-authorized payment for a task into escrow.
  *
- * @param jobId Optional pre-created ERC-8183 jobId. When omitted the job is
+ * @param jobId Optional pre-created SnapBackEscrow jobId. When omitted the job is
  *        created here (jobId then arrives via the JobCreated event, so callers
  *        that need it immediately should create the job first and pass it in).
  */
@@ -36,7 +39,6 @@ export async function settleX402ToEscrow(params: {
   taskId: string;
   buyerWalletId: string;
   sellerAddress: Address;
-  evaluatorAddress: Address;
   amountUsdc: string;
   expiredAt: number;
   description: string;
@@ -50,7 +52,6 @@ export async function settleX402ToEscrow(params: {
     result.jobTxId = await createEscrowJob({
       buyerCircleWalletId: params.buyerWalletId,
       sellerAddress: params.sellerAddress,
-      evaluatorAddress: params.evaluatorAddress,
       expiredAt: params.expiredAt,
       description: params.description,
     });
@@ -58,7 +59,7 @@ export async function settleX402ToEscrow(params: {
 
   if (jobId) {
     result.budgetTxId = await setJobBudget(params.buyerWalletId, jobId, params.amountUsdc);
-    // THE LOCK — approve + fund. Funds land in ERC-8183 escrow, not the seller.
+    // THE LOCK — approve + fund. Funds land in SnapBackEscrow, not the seller.
     const { approveId, fundId } = await lockFunds(
       params.buyerWalletId,
       jobId,
@@ -79,7 +80,7 @@ export async function settleX402ToEscrow(params: {
     circle_tx_id: result.fundTxId ?? null,
     metadata: {
       via: "x402",
-      note: "x402 settlement redirected into SnapBackEscrow-hooked ERC-8183 job",
+      note: "x402 settlement redirected into a SnapBackEscrow job",
       job_id: jobId ?? null,
       seller: params.sellerAddress,
     },

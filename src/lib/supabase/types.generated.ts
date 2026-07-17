@@ -14,6 +14,47 @@ export type Database = {
   }
   public: {
     Tables: {
+      admin_audit_log: {
+        Row: {
+          action: Database["public"]["Enums"]["admin_action"]
+          admin_wallet_id: string
+          amount_usdc: number | null
+          created_at: string
+          details: Json
+          id: string
+          target_id: string | null
+          target_type: string | null
+        }
+        Insert: {
+          action: Database["public"]["Enums"]["admin_action"]
+          admin_wallet_id: string
+          amount_usdc?: number | null
+          created_at?: string
+          details?: Json
+          id?: string
+          target_id?: string | null
+          target_type?: string | null
+        }
+        Update: {
+          action?: Database["public"]["Enums"]["admin_action"]
+          admin_wallet_id?: string
+          amount_usdc?: number | null
+          created_at?: string
+          details?: Json
+          id?: string
+          target_id?: string | null
+          target_type?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "admin_audit_log_admin_wallet_id_fkey"
+            columns: ["admin_wallet_id"]
+            isOneToOne: false
+            referencedRelation: "wallets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       app_wallets: {
         Row: {
           account_type: string
@@ -46,6 +87,44 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      buyer_dispute_stats: {
+        Row: {
+          consecutive_losses: number
+          disputes_filed: number
+          disputes_lost: number
+          disputes_won: number
+          scrutiny_flagged: boolean
+          updated_at: string
+          wallet_id: string
+        }
+        Insert: {
+          consecutive_losses?: number
+          disputes_filed?: number
+          disputes_lost?: number
+          disputes_won?: number
+          scrutiny_flagged?: boolean
+          updated_at?: string
+          wallet_id: string
+        }
+        Update: {
+          consecutive_losses?: number
+          disputes_filed?: number
+          disputes_lost?: number
+          disputes_won?: number
+          scrutiny_flagged?: boolean
+          updated_at?: string
+          wallet_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "buyer_dispute_stats_wallet_id_fkey"
+            columns: ["wallet_id"]
+            isOneToOne: true
+            referencedRelation: "wallets"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       disputes: {
         Row: {
@@ -132,44 +211,6 @@ export type Database = {
             columns: ["task_id"]
             isOneToOne: false
             referencedRelation: "tasks"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      buyer_dispute_stats: {
-        Row: {
-          consecutive_losses: number
-          disputes_filed: number
-          disputes_lost: number
-          disputes_won: number
-          scrutiny_flagged: boolean
-          updated_at: string
-          wallet_id: string
-        }
-        Insert: {
-          consecutive_losses?: number
-          disputes_filed?: number
-          disputes_lost?: number
-          disputes_won?: number
-          scrutiny_flagged?: boolean
-          updated_at?: string
-          wallet_id: string
-        }
-        Update: {
-          consecutive_losses?: number
-          disputes_filed?: number
-          disputes_lost?: number
-          disputes_won?: number
-          scrutiny_flagged?: boolean
-          updated_at?: string
-          wallet_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "buyer_dispute_stats_wallet_id_fkey"
-            columns: ["wallet_id"]
-            isOneToOne: true
-            referencedRelation: "wallets"
             referencedColumns: ["id"]
           },
         ]
@@ -305,6 +346,41 @@ export type Database = {
             columns: ["task_id"]
             isOneToOne: false
             referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      insurance_pool_adjustments: {
+        Row: {
+          admin_wallet_id: string
+          amount_usdc: number
+          created_at: string
+          direction: Database["public"]["Enums"]["insurance_pool_direction"]
+          id: string
+          reason: string | null
+        }
+        Insert: {
+          admin_wallet_id: string
+          amount_usdc: number
+          created_at?: string
+          direction: Database["public"]["Enums"]["insurance_pool_direction"]
+          id?: string
+          reason?: string | null
+        }
+        Update: {
+          admin_wallet_id?: string
+          amount_usdc?: number
+          created_at?: string
+          direction?: Database["public"]["Enums"]["insurance_pool_direction"]
+          id?: string
+          reason?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "insurance_pool_adjustments_admin_wallet_id_fkey"
+            columns: ["admin_wallet_id"]
+            isOneToOne: false
+            referencedRelation: "wallets"
             referencedColumns: ["id"]
           },
         ]
@@ -794,6 +870,48 @@ export type Database = {
           },
         ]
       }
+      wallet_flags: {
+        Row: {
+          created_at: string
+          flagged: boolean
+          flagged_by_wallet_id: string | null
+          reason: string | null
+          updated_at: string
+          wallet_id: string
+        }
+        Insert: {
+          created_at?: string
+          flagged?: boolean
+          flagged_by_wallet_id?: string | null
+          reason?: string | null
+          updated_at?: string
+          wallet_id: string
+        }
+        Update: {
+          created_at?: string
+          flagged?: boolean
+          flagged_by_wallet_id?: string | null
+          reason?: string | null
+          updated_at?: string
+          wallet_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "wallet_flags_flagged_by_wallet_id_fkey"
+            columns: ["flagged_by_wallet_id"]
+            isOneToOne: false
+            referencedRelation: "wallets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "wallet_flags_wallet_id_fkey"
+            columns: ["wallet_id"]
+            isOneToOne: true
+            referencedRelation: "wallets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       wallets: {
         Row: {
           account_type: string
@@ -849,6 +967,16 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
+      admin_action:
+        | "flag_user"
+        | "unflag_user"
+        | "manual_sweep_session"
+        | "sweep_all_abandoned"
+        | "revalidate_task"
+        | "force_resolve_dispute"
+        | "trigger_auto_release"
+        | "insurance_pool_top_up"
+        | "insurance_pool_withdraw"
       app_wallet_role: "delegate" | "treasury"
       dispute_kind: "standard" | "post_approval_contest"
       dispute_outcome: "pending" | "favor_payer" | "favor_payee" | "split"
@@ -859,6 +987,7 @@ export type Database = {
         | "retry_charged"
         | "topic_change"
       estimator_session_status: "active" | "credited" | "swept" | "abandoned"
+      insurance_pool_direction: "top_up" | "withdraw"
       payment_kind:
         | "deposit"
         | "escrow"
@@ -1021,6 +1150,17 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      admin_action: [
+        "flag_user",
+        "unflag_user",
+        "manual_sweep_session",
+        "sweep_all_abandoned",
+        "revalidate_task",
+        "force_resolve_dispute",
+        "trigger_auto_release",
+        "insurance_pool_top_up",
+        "insurance_pool_withdraw",
+      ],
       app_wallet_role: ["delegate", "treasury"],
       dispute_kind: ["standard", "post_approval_contest"],
       dispute_outcome: ["pending", "favor_payer", "favor_payee", "split"],
@@ -1032,6 +1172,7 @@ export const Constants = {
         "topic_change",
       ],
       estimator_session_status: ["active", "credited", "swept", "abandoned"],
+      insurance_pool_direction: ["top_up", "withdraw"],
       payment_kind: [
         "deposit",
         "escrow",

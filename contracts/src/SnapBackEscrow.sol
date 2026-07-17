@@ -1,56 +1,106 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {IACPHook} from "./interfaces/IACPHook.sol";
-import {IAgenticCommerce, JobStatus} from "./interfaces/IAgenticCommerce.sol";
+interface IERC20 {
+    function transferFrom(address from, address to, uint256 amount) external returns (bool);
+    function transfer(address to, uint256 amount) external returns (bool);
+}
 
 /// @title SnapBackEscrow
-/// @notice SnapBack semantics layered on ERC-8183 AgenticCommerce jobs.
+/// @notice Standalone task escrow with snapback semantics — buyer and seller
+///         wallets call this contract directly; no external job-settlement
+///         contract is involved.
 ///
-/// @dev DESIGN: ERC-8183 already custodies escrow (fund → submit → complete /
-///      reject / claimRefund). This contract does NOT hold funds and does not
-///      re-implement lock/release/refund. It is an ERC-8183 **hook**: jobs are
-///      created with `createJob(..., hook = address(this))`, and this contract
-///      adds the state that ERC-8183 leaves to the application:
+/// @dev ARCHITECTURE CHANGE (from the ERC-8183/AgenticCommerce-hook design):
+///      the original SnapBackEscrow was a *hook* on AgenticCommerce.createJob
+///      and never held funds itself — settlement was always delegated back to
+///      AgenticCommerce's own complete/reject. That required AgenticCommerce's
+///      ADMIN_ROLE holder (a third party we don't control — verified on-chain:
+///      platformTreasury() on the deployed AgenticCommerce equals the
+///      ADMIN_ROLE holder, and it isn't our deployer) to whitelist this
+///      contract's address via setHookWhitelist, which every real createJob
+///      call reverts without (HookNotWhitelisted()). No self-service path for
+///      that exists anywhere in the Arc docs — every documented example uses
+///      hook = address(0). This version holds USDC directly and implements
+///      its own job lifecycle, so it works without any third-party approval.
 ///
-///        * an accept window that starts when the provider submits,
-///        * keeper-driven auto-release once that window lapses,
-///        * a dispute that freezes auto-release pending a verdict.
+///      Preserved from the original: the accept window, keeper-driven
+///      permissionless autoRelease, dispute-freeze, and
+///      resolveDispute(jobId, favorBuyer, reason) — JudgeRegistry calls this
+///      exact signature and needed zero changes to keep working against this
+///      contract (see setEscrow in the deploy script).
 ///
-///      Settlement itself is always delegated back to AgenticCommerce
-///      (`complete` / `reject`), so funds only ever move through the audited
-///      escrow. Note ERC-8183 makes `claimRefund` non-hookable on purpose, so a
-///      buyer's post-expiry refund can never be blocked by this contract.
-contract SnapBackEscrow is IACPHook {
+///      NEW here — two gaps the AgenticCommerce integration used to cover
+///      for free, now this contract's own responsibility:
+///        * release() — a distinct buyer-agent-gated early-release path. The
+///          original design conflated "validator approved" with "keeper
+///          timeout" under one autoRelease() call that unconditionally
+///          required the accept window to have elapsed — which the
+///          validator's approve path (lib/validator-service.ts) would have
+///          violated every single time it actually ran on-chain. That bug
+///          was invisible until now only because on-chain execution never
+///          got this far.
+///        * claimExpired() — AgenticCommerce's own claimRefund was
+///          deliberately non-hookable so a buyer could never be blocked from
+///          reclaiming funds if a provider never delivered. A standalone
+///          contract has to provide that guarantee itself, or funds could
+///          get stuck forever against an unresponsive provider.
+contract SnapBackEscrow {
     // ── errors ─────────────────────────────────────────────────
-    error OnlyCommerce();
-    error OnlyBuyer();
+    error OnlyClient();
+    error OnlyProvider();
     error OnlyArbiter();
+    error OnlyOwner();
+    error TransferFailed();
+    error NotOpen();
+    error NotFunded();
     error NotSubmitted();
     error WindowNotElapsed();
     error WindowElapsed();
     error AlreadyDisputed();
     error NotDisputed();
-    error NotSettled();
+    error NoBudget();
+    error NotExpired();
+    error ZeroAddress();
+
+    enum Status {
+        Open, // created, no budget yet
+        Funded, // budget set + USDC locked
+        Submitted, // provider delivered; accept window running
+        Completed, // paid to provider
+        Rejected // refunded to client
+
+    }
+
+    struct Job {
+        address client;
+        address provider;
+        uint256 budget;
+        uint64 expiredAt;
+        uint64 submittedAt;
+        uint64 acceptDeadline;
+        Status status;
+        bool disputed;
+    }
 
     // ── events ─────────────────────────────────────────────────
-    event AcceptWindowStarted(uint256 indexed jobId, uint64 acceptDeadline);
+    event JobCreated(
+        uint256 indexed jobId, address indexed client, address indexed provider, uint64 expiredAt, string description
+    );
+    event BudgetSet(uint256 indexed jobId, uint256 amount);
+    event Funded(uint256 indexed jobId, uint256 amount);
+    event Submitted(uint256 indexed jobId, bytes32 deliverableHash, uint64 acceptDeadline);
+    event Released(uint256 indexed jobId, bytes32 reason);
     event AutoReleased(uint256 indexed jobId);
     event SnappedBack(uint256 indexed jobId, bytes32 reason);
     event Disputed(uint256 indexed jobId, address indexed by, bytes32 reason);
-    event DisputeResolved(uint256 indexed jobId, bool favorBuyer);
+    event DisputeResolved(uint256 indexed jobId, bool favorBuyer, bytes32 reason);
+    event ExpiredClaimed(uint256 indexed jobId);
 
-    /// @notice Per-job snapback state. Funds live in AgenticCommerce, not here.
-    struct Escrow {
-        uint64 submittedAt;
-        uint64 acceptDeadline;
-        bool disputed;
-        bool settled;
-    }
+    IERC20 public immutable usdc;
 
-    IAgenticCommerce public immutable commerce;
-
-    /// @notice Default window a buyer has to snap a payment back after submission.
+    /// @notice Default window a buyer has to snap a payment back / dispute
+    ///         after the provider submits.
     uint64 public immutable defaultAcceptWindow;
 
     /// @notice Resolves disputes (the JudgeRegistry).
@@ -58,127 +108,169 @@ contract SnapBackEscrow is IACPHook {
 
     address public immutable owner;
 
-    mapping(uint256 jobId => Escrow) public escrows;
+    uint256 public jobCounter;
+    mapping(uint256 jobId => Job) public jobs;
 
-    modifier onlyCommerce() {
-        if (msg.sender != address(commerce)) revert OnlyCommerce();
+    modifier onlyClient(uint256 jobId) {
+        if (msg.sender != jobs[jobId].client) revert OnlyClient();
         _;
     }
 
-    constructor(address commerce_, uint64 defaultAcceptWindow_, address arbiter_) {
-        commerce = IAgenticCommerce(commerce_);
+    constructor(address usdc_, uint64 defaultAcceptWindow_, address arbiter_) {
+        if (usdc_ == address(0)) revert ZeroAddress();
+        usdc = IERC20(usdc_);
         defaultAcceptWindow = defaultAcceptWindow_;
         arbiter = arbiter_;
         owner = msg.sender;
     }
 
     function setArbiter(address arbiter_) external {
-        if (msg.sender != owner) revert OnlyArbiter();
+        if (msg.sender != owner) revert OnlyOwner();
         arbiter = arbiter_;
     }
 
-    // ── ERC-165 ────────────────────────────────────────────────
+    // ── job lifecycle ──────────────────────────────────────────
 
-    /// @dev AgenticCommerce.createJob gates non-zero hooks behind
-    ///      `ERC165Checker.supportsInterface(hook, type(IACPHook).interfaceId)`,
-    ///      which itself requires declaring support for ERC-165 (0x01ffc9a7)
-    ///      before it will even check the specific interface. Without this,
-    ///      every createJob call using this hook reverts with InvalidJob().
-    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
-        return interfaceId == type(IACPHook).interfaceId || interfaceId == 0x01ffc9a7;
+    /// @notice Buyer commissions a job. No funds move yet.
+    function createJob(address provider, uint64 expiredAt, string calldata description)
+        external
+        returns (uint256 jobId)
+    {
+        if (provider == address(0)) revert ZeroAddress();
+        jobId = ++jobCounter;
+        jobs[jobId] = Job({
+            client: msg.sender,
+            provider: provider,
+            budget: 0,
+            expiredAt: expiredAt,
+            submittedAt: 0,
+            acceptDeadline: 0,
+            status: Status.Open,
+            disputed: false
+        });
+        emit JobCreated(jobId, msg.sender, provider, expiredAt, description);
     }
 
-    // ── ERC-8183 hook callbacks ────────────────────────────────
-
-    /// @inheritdoc IACPHook
-    /// @dev Blocks a `complete` while a dispute is open — settlement must go
-    ///      through the arbiter's verdict instead of the buyer/evaluator.
-    function beforeAction(uint256 jobId, bytes4 selector, bytes calldata) external view onlyCommerce {
-        if (selector == IAgenticCommerce.complete.selector && escrows[jobId].disputed) {
-            revert AlreadyDisputed();
-        }
+    /// @notice Provider sets the price before funding.
+    function setBudget(uint256 jobId, uint256 amount) external {
+        Job storage j = jobs[jobId];
+        if (msg.sender != j.provider) revert OnlyProvider();
+        if (j.status != Status.Open) revert NotOpen();
+        j.budget = amount;
+        emit BudgetSet(jobId, amount);
     }
 
-    /// @inheritdoc IACPHook
-    /// @dev Starts the accept window when the provider submits, and marks the
-    ///      job settled once AgenticCommerce completes or rejects it.
-    function afterAction(uint256 jobId, bytes4 selector, bytes calldata) external onlyCommerce {
-        if (selector == IAgenticCommerce.submit.selector) {
-            uint64 deadline = uint64(block.timestamp) + defaultAcceptWindow;
-            escrows[jobId].submittedAt = uint64(block.timestamp);
-            escrows[jobId].acceptDeadline = deadline;
-            emit AcceptWindowStarted(jobId, deadline);
-        } else if (
-            selector == IAgenticCommerce.complete.selector || selector == IAgenticCommerce.reject.selector
-        ) {
-            escrows[jobId].settled = true;
-        }
+    /// @notice THE LOCK: buyer funds the job. Caller must have approved this
+    ///         contract for `budget` beforehand.
+    function fund(uint256 jobId) external onlyClient(jobId) {
+        Job storage j = jobs[jobId];
+        if (j.status != Status.Open) revert NotOpen();
+        if (j.budget == 0) revert NoBudget();
+        j.status = Status.Funded;
+        emit Funded(jobId, j.budget);
+        if (!usdc.transferFrom(msg.sender, address(this), j.budget)) revert TransferFailed();
     }
 
-    // ── snapback / auto-release ────────────────────────────────
+    /// @notice Provider delivers — starts the accept window.
+    function submit(uint256 jobId, bytes32 deliverableHash) external {
+        Job storage j = jobs[jobId];
+        if (msg.sender != j.provider) revert OnlyProvider();
+        if (j.status != Status.Funded) revert NotFunded();
+        uint64 deadline = uint64(block.timestamp) + defaultAcceptWindow;
+        j.submittedAt = uint64(block.timestamp);
+        j.acceptDeadline = deadline;
+        j.status = Status.Submitted;
+        emit Submitted(jobId, deliverableHash, deadline);
+    }
 
-    /// @notice Buyer snaps the payment back during the accept window.
-    /// @dev Delegates to AgenticCommerce.reject — this contract never moves funds.
-    function snapback(uint256 jobId, bytes32 reason) external {
-        Escrow memory e = escrows[jobId];
-        if (e.submittedAt == 0) revert NotSubmitted();
-        if (e.disputed) revert AlreadyDisputed();
-        if (block.timestamp >= e.acceptDeadline) revert WindowElapsed();
-        if (commerce.getJob(jobId).client != msg.sender) revert OnlyBuyer();
+    // ── settlement ─────────────────────────────────────────────
 
-        emit SnappedBack(jobId, reason);
-        commerce.reject(jobId, reason, "");
+    /// @notice Buyer (agent) approves early — pays the provider now, without
+    ///         waiting for the accept window to lapse.
+    function release(uint256 jobId, bytes32 reason) external onlyClient(jobId) {
+        Job storage j = jobs[jobId];
+        if (j.status != Status.Submitted) revert NotSubmitted();
+        if (j.disputed) revert AlreadyDisputed();
+        j.status = Status.Completed;
+        emit Released(jobId, reason);
+        if (!usdc.transfer(j.provider, j.budget)) revert TransferFailed();
     }
 
     /// @notice Keeper call: auto-release once the accept window lapses.
     /// @dev Permissionless — the window elapsing is the authorization. A job
     ///      under dispute is frozen until the arbiter rules.
     function autoRelease(uint256 jobId) external {
-        Escrow memory e = escrows[jobId];
-        if (e.submittedAt == 0) revert NotSubmitted();
-        if (e.disputed) revert AlreadyDisputed();
-        if (block.timestamp < e.acceptDeadline) revert WindowNotElapsed();
-
+        Job storage j = jobs[jobId];
+        if (j.status != Status.Submitted) revert NotSubmitted();
+        if (j.disputed) revert AlreadyDisputed();
+        if (block.timestamp < j.acceptDeadline) revert WindowNotElapsed();
+        j.status = Status.Completed;
         emit AutoReleased(jobId);
-        commerce.complete(jobId, bytes32("auto-release"), "");
+        if (!usdc.transfer(j.provider, j.budget)) revert TransferFailed();
+    }
+
+    /// @notice Buyer snaps the payment back during the accept window.
+    function snapback(uint256 jobId, bytes32 reason) external onlyClient(jobId) {
+        Job storage j = jobs[jobId];
+        if (j.status != Status.Submitted) revert NotSubmitted();
+        if (j.disputed) revert AlreadyDisputed();
+        if (block.timestamp >= j.acceptDeadline) revert WindowElapsed();
+        j.status = Status.Rejected;
+        emit SnappedBack(jobId, reason);
+        if (!usdc.transfer(j.client, j.budget)) revert TransferFailed();
     }
 
     /// @notice Buyer opens a dispute, freezing auto-release until a verdict.
-    function dispute(uint256 jobId, bytes32 reason) external {
-        Escrow storage e = escrows[jobId];
-        if (e.submittedAt == 0) revert NotSubmitted();
-        if (e.disputed) revert AlreadyDisputed();
-        if (block.timestamp >= e.acceptDeadline) revert WindowElapsed();
-        if (commerce.getJob(jobId).client != msg.sender) revert OnlyBuyer();
-
-        e.disputed = true;
+    function dispute(uint256 jobId, bytes32 reason) external onlyClient(jobId) {
+        Job storage j = jobs[jobId];
+        if (j.status != Status.Submitted) revert NotSubmitted();
+        if (j.disputed) revert AlreadyDisputed();
+        if (block.timestamp >= j.acceptDeadline) revert WindowElapsed();
+        j.disputed = true;
         emit Disputed(jobId, msg.sender, reason);
     }
 
-    /// @notice Arbiter (JudgeRegistry) settles a disputed job.
+    /// @notice Arbiter (JudgeRegistry) settles a disputed job. Same signature
+    ///         the original hook design exposed, so JudgeRegistry needed no
+    ///         changes to keep calling this.
     function resolveDispute(uint256 jobId, bool favorBuyer, bytes32 reason) external {
         if (msg.sender != arbiter) revert OnlyArbiter();
-        Escrow storage e = escrows[jobId];
-        if (!e.disputed) revert NotDisputed();
-
-        e.disputed = false;
-        emit DisputeResolved(jobId, favorBuyer);
-
+        Job storage j = jobs[jobId];
+        if (!j.disputed) revert NotDisputed();
+        j.disputed = false;
+        emit DisputeResolved(jobId, favorBuyer, reason);
         if (favorBuyer) {
-            commerce.reject(jobId, reason, "");
+            j.status = Status.Rejected;
+            if (!usdc.transfer(j.client, j.budget)) revert TransferFailed();
         } else {
-            commerce.complete(jobId, reason, "");
+            j.status = Status.Completed;
+            if (!usdc.transfer(j.provider, j.budget)) revert TransferFailed();
         }
+    }
+
+    /// @notice Buyer reclaims funds if the provider never submitted before
+    ///         expiry. See the contract-level note on why this exists.
+    function claimExpired(uint256 jobId) external onlyClient(jobId) {
+        Job storage j = jobs[jobId];
+        if (j.status != Status.Funded) revert NotFunded();
+        if (block.timestamp <= j.expiredAt) revert NotExpired();
+        j.status = Status.Rejected;
+        emit ExpiredClaimed(jobId);
+        if (!usdc.transfer(j.client, j.budget)) revert TransferFailed();
     }
 
     // ── views ──────────────────────────────────────────────────
 
+    function getJob(uint256 jobId) external view returns (Job memory) {
+        return jobs[jobId];
+    }
+
     function acceptDeadline(uint256 jobId) external view returns (uint64) {
-        return escrows[jobId].acceptDeadline;
+        return jobs[jobId].acceptDeadline;
     }
 
     function isAutoReleasable(uint256 jobId) external view returns (bool) {
-        Escrow memory e = escrows[jobId];
-        return e.submittedAt != 0 && !e.disputed && !e.settled && block.timestamp >= e.acceptDeadline;
+        Job memory j = jobs[jobId];
+        return j.status == Status.Submitted && !j.disputed && block.timestamp >= j.acceptDeadline;
     }
 }

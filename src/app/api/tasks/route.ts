@@ -9,7 +9,7 @@ import { createAndFundTask } from "@/lib/tasks/create";
  *
  * Buyer commissions a task from an Estimator quote + a chosen Marketplace
  * listing: creates the task, credits the quote-phase escrow toward it, and
- * creates + funds the matching ERC-8183 job on-chain.
+ * creates + funds the matching job on SnapBackEscrow on-chain.
  */
 export async function POST(request: Request) {
   const session = await getSession();

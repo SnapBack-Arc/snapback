@@ -6,6 +6,7 @@ import type { ListingRow } from "@/lib/supabase/types";
 import { formatUsdc } from "@/lib/format";
 import AgentRoster, { AGENT_COLOR, type AgentEntry } from "@/components/AgentRoster";
 import { isResearchSourcingListing } from "@/lib/listing-agents";
+import { estimateResearchSourcingCostUsdc } from "@/lib/agents/research-sourcing-pricing";
 
 type GateResult = "original" | "retry_free" | "retry_charged" | "topic_change";
 
@@ -45,10 +46,21 @@ const GATE_LABEL: Record<GateResult, string> = {
 function sellerRankLabel(sla: unknown): string | null {
   if (!sla || typeof sla !== "object") return null;
   const entries = Object.entries(sla as Record<string, unknown>).filter(
-    ([, v]) => typeof v === "string" || typeof v === "number" || typeof v === "boolean",
+    ([k, v]) =>
+      k !== "agent" && (typeof v === "string" || typeof v === "number" || typeof v === "boolean"),
   );
   if (entries.length === 0) return null;
   return entries.map(([k, v]) => `${k}: ${v}`).join(" · ");
+}
+
+/** Reserved, non-interactive slot shown alongside/instead of real candidates. */
+function PlaceholderSlot() {
+  return (
+    <div className="w-full rounded-xl border border-dashed border-zinc-800 bg-zinc-950/50 px-4 py-3">
+      <div className="h-4 w-1/3 rounded bg-zinc-800/60" />
+      <div className="mt-2 h-3 w-2/3 rounded bg-zinc-800/40" />
+    </div>
+  );
 }
 
 export default function TaskSubmissionFlow() {
@@ -93,10 +105,19 @@ export default function TaskSubmissionFlow() {
       setListings(activeListings);
       setListingsError(null);
 
+      // Only ever auto-select the one real worker agent (Research & Sourcing),
+      // and only when it's a genuine keyword match for this request — not
+      // just whatever the fallback path happened to return as "cheapest."
+      // See "Choose a seller" below: every other listing is simulated
+      // inventory and is never offered as a candidate here.
       const matched = result.session.matched_listing_ids
         .map((id) => activeListings.find((l) => l.id === id))
         .find((l): l is ListingRow => Boolean(l));
-      setSelectedListingId(matched?.id ?? activeListings[0]?.id ?? null);
+      const isReal =
+        result.session.seller_match_type === "keyword" &&
+        !!matched &&
+        isResearchSourcingListing(matched.sla);
+      setSelectedListingId(isReal && matched ? matched.id : null);
     } catch (err) {
       setQuoteError(err instanceof Error ? err.message : "Failed to get a quote");
       setListingsError(null);
@@ -131,10 +152,24 @@ export default function TaskSubmissionFlow() {
     }
   }
 
-  const selectedListing = listings?.find((l) => l.id === selectedListingId) ?? null;
+  // The only listing this flow ever shows as a candidate is Research &
+  // Sourcing, and only when it's a genuine keyword match — see the
+  // "Choose a seller" section below for why every other listing is
+  // excluded rather than shown as a simulated competing quote.
   const autoSelectedId = quote?.session.matched_listing_ids.find((id) =>
     listings?.some((l) => l.id === id),
   );
+  const matchedListing = listings?.find((l) => l.id === autoSelectedId) ?? null;
+  const isRealMatch =
+    !!quote &&
+    quote.session.seller_match_type === "keyword" &&
+    !!matchedListing &&
+    isResearchSourcingListing(matchedListing.sla);
+  const selectedListing = isRealMatch ? matchedListing : null;
+  const realPriceUsdc =
+    isRealMatch && quote
+      ? estimateResearchSourcingCostUsdc(quote.session.difficulty, quote.session.scope_quantity)
+      : null;
 
   const agents: AgentEntry[] = [];
   if (quote) {
@@ -151,20 +186,12 @@ export default function TaskSubmissionFlow() {
       description: `Generated this quote from ${quote.session.seller_match_type === "keyword" ? "matching" : "the cheapest available"} Marketplace listings.`,
     });
   }
-  if (quote && selectedListing) {
-    const isRealMatch = selectedListing.id === autoSelectedId && quote.session.seller_match_type === "keyword";
-    const selectionReason = isRealMatch
-      ? "selected as the lowest-priced match for your request"
-      : selectedListing.id === autoSelectedId
-        ? "selected as the cheapest available (no close match found)"
-        : "picked manually";
+  if (quote && selectedListing && realPriceUsdc !== null) {
     agents.push({
       role: "Seller agent",
       monogram: "S",
       colorClass: AGENT_COLOR.seller,
-      description: isResearchSourcingListing(selectedListing.sla)
-        ? `${selectedListing.title} — ${selectionReason}. A real worker: will execute with Claude + live web search, not a placeholder.`
-        : `${selectedListing.title} — ${selectionReason}.`,
+      description: `${selectedListing.title} — the one real worker agent in this demo. Executes with Claude + live web search for ${formatUsdc(realPriceUsdc)}, not a placeholder.`,
     });
   }
 
@@ -259,77 +286,70 @@ export default function TaskSubmissionFlow() {
           {listings && listings.length === 0 && (
             <p className="text-sm text-zinc-500">No active listings available right now.</p>
           )}
-          {listings && listings.length > 0 && quote.session.seller_match_type === "fallback" && (
-            <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-              Nothing in the marketplace closely matches &ldquo;{quote.session.subject}&rdquo; —
-              showing the cheapest active listings instead. Pick manually if none of these are a
-              good fit.
-            </p>
-          )}
-          <div className="space-y-2">
-            {listings?.map((listing) => {
-              const isAuto = listing.id === autoSelectedId;
-              const isSelected = listing.id === selectedListingId;
-              const isRealMatch = isAuto && quote.session.seller_match_type === "keyword";
-              const rank = sellerRankLabel(listing.sla);
-              return (
-                <button
-                  key={listing.id}
-                  type="button"
-                  onClick={() => setSelectedListingId(listing.id)}
-                  className={`w-full rounded-xl border px-4 py-3 text-left transition ${
-                    isSelected
-                      ? "border-emerald-500 bg-emerald-500/10"
-                      : "border-zinc-800 bg-zinc-900 hover:border-zinc-700"
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-white">{listing.title}</span>
-                        {isAuto && (
-                          <span
-                            className={`rounded-full px-2 py-0.5 text-xs ${
-                              isRealMatch
-                                ? "bg-emerald-500/15 text-emerald-400"
-                                : "bg-zinc-700/40 text-zinc-300"
-                            }`}
-                          >
-                            {isRealMatch ? "Auto-selected" : "Cheapest available"}
-                          </span>
-                        )}
-                        {isResearchSourcingListing(listing.sla) && (
-                          <span className="rounded-full bg-cyan-500/15 px-2 py-0.5 text-xs text-cyan-400">
-                            Real agent
-                          </span>
-                        )}
-                      </div>
-                      {listing.description && (
-                        <p className="mt-0.5 text-sm text-zinc-400">{listing.description}</p>
-                      )}
-                      {isAuto && (
-                        <p className="mt-1 text-xs text-zinc-500">
-                          {isRealMatch
-                            ? `Lowest-priced match for "${quote.session.subject}"`
-                            : "No close match found for this request — lowest price overall"}
-                        </p>
-                      )}
-                      <p className="mt-1 text-xs text-zinc-600">
-                        Reputation: New seller {rank ? `· SLA — ${rank}` : ""}
-                      </p>
+          {/* This demo runs exactly one real worker agent (Research & Sourcing).
+              Every other seed listing is simulated inventory with no execution
+              behind it — nothing here should ever read as a real competing
+              quote unless it genuinely is one. See README.md "Simulated vs.
+              real sellers". */}
+          {listings && isRealMatch && matchedListing && realPriceUsdc !== null && (
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={() => setSelectedListingId(matchedListing.id)}
+                className={`w-full rounded-xl border px-4 py-3 text-left transition ${
+                  selectedListingId === matchedListing.id
+                    ? "border-emerald-500 bg-emerald-500/10"
+                    : "border-zinc-800 bg-zinc-900 hover:border-zinc-700"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-white">{matchedListing.title}</span>
+                      <span className="rounded-full bg-cyan-500/15 px-2 py-0.5 text-xs text-cyan-400">
+                        Real agent
+                      </span>
                     </div>
-                    <span className="shrink-0 font-mono text-sm text-zinc-200">
-                      {formatUsdc(listing.price_usdc)}
-                    </span>
+                    {matchedListing.description && (
+                      <p className="mt-0.5 text-sm text-zinc-400">{matchedListing.description}</p>
+                    )}
+                    <p className="mt-1 text-xs text-zinc-500">
+                      Live quote, priced for this task&apos;s scope — not a fixed listing price.
+                    </p>
+                    <p className="mt-1 text-xs text-zinc-600">
+                      Reputation: New seller
+                      {sellerRankLabel(matchedListing.sla) ? ` · SLA — ${sellerRankLabel(matchedListing.sla)}` : ""}
+                    </p>
                   </div>
-                </button>
-              );
-            })}
-          </div>
+                  <span className="shrink-0 font-mono text-sm text-zinc-200">
+                    {formatUsdc(realPriceUsdc)}
+                  </span>
+                </div>
+              </button>
+              <p className="px-1 text-xs text-zinc-500">
+                1 real quote shown above; the system is designed to surface 3-5 live candidates
+                once more worker agents are connected.
+              </p>
+              <PlaceholderSlot />
+              <PlaceholderSlot />
+            </div>
+          )}
+          {listings && listings.length > 0 && !isRealMatch && (
+            <div className="space-y-2">
+              <p className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-400">
+                This demo currently runs one real worker agent (Research &amp; Sourcing). In the
+                full system, you&apos;d see 3-5 real candidate quotes here to choose from — these
+                two slots are reserved to show that layout, but aren&apos;t live in this build
+                yet.
+              </p>
+              <PlaceholderSlot />
+              <PlaceholderSlot />
+            </div>
+          )}
         </section>
       )}
 
-      {quote && selectedListing && (
+      {quote && selectedListing && realPriceUsdc !== null && (
         <section className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900 p-5">
           <div className="space-y-1">
             <label htmlFor="title" className="text-sm font-medium text-zinc-300">
@@ -351,7 +371,7 @@ export default function TaskSubmissionFlow() {
           >
             {submitting
               ? "Submitting…"
-              : `Submit for real — commission ${selectedListing.title} for ${formatUsdc(selectedListing.price_usdc)}`}
+              : `Submit for real — commission ${selectedListing.title} for ${formatUsdc(realPriceUsdc)}`}
           </button>
           {submitError && <p className="text-sm text-red-400">{submitError}</p>}
         </section>

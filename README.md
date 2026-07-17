@@ -32,6 +32,34 @@ Adding another real worker for a different listing means writing an equivalent
 agent module and marking its listing the same way — the validation/dispute/
 settlement side needs no changes to support it.
 
+**Pricing** — Research & Sourcing is priced from its actual cost: a
+`claude-opus-4-8` research call, a low-effort structuring call, and a handful
+of `web_search` calls. Per real Anthropic pricing (Opus 4.8: $5/$25 per MTok
+input/output; web search: $10 per 1,000 searches), that's fractions of a cent
+for a trivial single-search task up to roughly $0.20–0.30 for a large,
+high-difficulty one — computed per task from the Estimator's parsed
+`difficulty`/`scope_quantity`, not a flat fee (`src/lib/agents/
+research-sourcing-pricing.ts`). The same function prices both what's quoted
+at submission time and what's actually escrowed — they can't diverge. Every
+other seed listing's price ($12–$65) is unaudited placeholder pricing with no
+real cost basis behind it; those figures are plausible for their category
+(freelance/gig-style work) but aren't tied to anything real the way Research
+& Sourcing's now is.
+
+**Candidate display** — because only one listing is backed by a real worker,
+the task submission flow (`src/components/TaskSubmissionFlow.tsx`) never
+shows a simulated listing as if it were a competing quote. If a request
+keyword-matches Research & Sourcing, that's the only candidate shown (at its
+real, per-task price), alongside two reserved placeholder slots noting the
+system is designed to surface 3–5 live candidates once more worker agents
+exist. If nothing matches Research & Sourcing, no listing is shown as
+selectable at all — just the same two placeholder slots explaining that this
+demo currently runs one real worker agent. This intentionally means a task
+can't be submitted through this flow against a category with no real agent;
+the general `/marketplace` browse page still lists every seed listing (with
+its own "Real agent" badge), since browsing inventory and picking a candidate
+for a specific task are different concerns.
+
 ---
 
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).

@@ -1,8 +1,14 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getUserDetail } from "@/lib/admin-data";
 import { explorerTxUrl } from "@/lib/arc";
 import { formatDate, formatUsdc, statusClasses } from "@/lib/format";
 import { contingentDisclosureLine } from "@/lib/estimator/fees";
+import ConfirmAction from "@/components/admin/ConfirmAction";
+import DisputeResolveActions from "@/components/admin/DisputeResolveActions";
+import FlagUserForm from "@/components/admin/FlagUserForm";
+
+const UNRESOLVED_TASK_STATUSES = new Set(["draft", "open", "quoted", "assigned", "in_progress", "submitted", "disputed"]);
 
 export default async function AdminUserDetailPage({
   params,
@@ -15,6 +21,8 @@ export default async function AdminUserDetailPage({
 
   const {
     wallet,
+    flagged,
+    flagReason,
     policy,
     tasks,
     payments,
@@ -25,20 +33,40 @@ export default async function AdminUserDetailPage({
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6">
-      <div>
-        <h1 className="text-2xl font-bold text-white">
-          {wallet.email || "Unknown user"}
-        </h1>
-        <p className="font-mono text-sm text-zinc-500">{wallet.address}</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-white">{wallet.email || "Unknown user"}</h1>
+          <p className="font-mono text-sm text-zinc-500">{wallet.address}</p>
+        </div>
+        {flagged ? (
+          <div className="flex items-center gap-2">
+            <span className="rounded-full bg-red-500/15 px-2.5 py-1 text-xs text-red-400">
+              Paused{flagReason ? ` — ${flagReason}` : ""}
+            </span>
+            <ConfirmAction
+              label="Unpause"
+              confirmLabel="restore this user's ability to request quotes, fund tasks, and file contests"
+              url={`/api/admin/users/${wallet.id}/unflag`}
+            />
+          </div>
+        ) : (
+          <FlagUserForm walletId={wallet.id} />
+        )}
       </div>
 
       {activeEstimatorSession && (
         <section className="rounded-xl border border-amber-900/40 bg-amber-950/10 p-4 text-sm">
-          <div>
-            <span className="text-amber-400">Active quote-phase escrow:</span>{" "}
-            {formatUsdc(activeEstimatorSession.escrow_held_usdc)} held · subject
-            &quot;{activeEstimatorSession.subject}&quot; · attempt{" "}
-            {activeEstimatorSession.attempt_count}
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <span className="text-amber-400">Active quote-phase escrow:</span>{" "}
+              {formatUsdc(activeEstimatorSession.escrow_held_usdc)} held · subject &quot;
+              {activeEstimatorSession.subject}&quot; · attempt {activeEstimatorSession.attempt_count}
+            </div>
+            <ConfirmAction
+              label="Sweep now"
+              confirmLabel="sweep this session's held escrow to Treasury immediately"
+              url={`/api/admin/sessions/${activeEstimatorSession.id}/sweep`}
+            />
           </div>
           {activeEstimatorSession.guaranteed_total_usdc !== null && (
             <div className="mt-2 border-t border-amber-900/30 pt-2">
@@ -47,9 +75,7 @@ export default async function AdminUserDetailPage({
               </div>
               {activeEstimatorSession.disclosed_contingent_fee_pct !== null && (
                 <div className="mt-1 text-xs text-zinc-400">
-                  {contingentDisclosureLine(
-                    activeEstimatorSession.disclosed_contingent_fee_pct,
-                  )}
+                  {contingentDisclosureLine(activeEstimatorSession.disclosed_contingent_fee_pct)}
                 </div>
               )}
             </div>
@@ -91,48 +117,61 @@ export default async function AdminUserDetailPage({
             <span>Max amount: {policy.max_amount_usdc ?? "—"} USDC</span>
             <span>Daily limit: {policy.daily_limit_usdc ?? "—"} USDC</span>
             <span>Auto-release: {policy.auto_release_hours ?? "—"}h</span>
-            <span>
-              Accuracy tolerance: {policy.accuracy_tolerance ?? "—"}
-            </span>
+            <span>Accuracy tolerance: {policy.accuracy_tolerance ?? "—"}</span>
           </div>
         </section>
       )}
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold text-zinc-200">
-          Tasks ({tasks.length})
-        </h2>
+        <h2 className="mb-3 text-sm font-semibold text-zinc-200">Tasks ({tasks.length})</h2>
         <div className="space-y-2">
-          {tasks.map((t) => (
-            <div
-              key={t.id}
-              className="rounded-lg border border-zinc-800 bg-zinc-900 p-3 text-sm"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-white">{t.title}</span>
-                <span
-                  className={`rounded-full px-2 py-0.5 text-xs ${statusClasses(t.status)}`}
-                >
-                  {t.status}
-                </span>
-              </div>
-              {t.description && (
-                <div className="mt-1 text-xs text-zinc-500">
-                  {t.description}
+          {tasks.map((t) => {
+            const metadata = t.metadata as { erc8183_job_id?: string } | null;
+            const hasJobId = Boolean(metadata?.erc8183_job_id);
+            const unresolved = UNRESOLVED_TASK_STATUSES.has(t.status);
+            return (
+              <div key={t.id} className="rounded-lg border border-zinc-800 bg-zinc-900 p-3 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <Link href={`/tasks/${t.id}`} className="text-emerald-400 hover:underline">
+                    {t.title}
+                  </Link>
+                  <span className={`rounded-full px-2 py-0.5 text-xs ${statusClasses(t.status)}`}>
+                    {t.status}
+                  </span>
                 </div>
-              )}
-            </div>
-          ))}
-          {tasks.length === 0 && (
-            <p className="text-sm text-zinc-500">No tasks.</p>
-          )}
+                {t.description && <div className="mt-1 text-xs text-zinc-500">{t.description}</div>}
+                {unresolved && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <ConfirmAction
+                      label="Re-run validator (last deliverable)"
+                      confirmLabel="re-run the validator against this task's most recently submitted deliverable"
+                      url={`/api/admin/tasks/${t.id}/revalidate`}
+                      body={{ source: "last_deliverable" }}
+                    />
+                    <ConfirmAction
+                      label="Re-run Research & Sourcing agent"
+                      confirmLabel="regenerate a fresh Research & Sourcing deliverable and validate it"
+                      url={`/api/admin/tasks/${t.id}/revalidate`}
+                      body={{ source: "fresh_research" }}
+                    />
+                    {hasJobId && (
+                      <ConfirmAction
+                        label="Trigger autoRelease"
+                        confirmLabel="call SnapBackEscrow.autoRelease() for this task's on-chain job (reverts if the accept window hasn't elapsed)"
+                        url={`/api/admin/tasks/${t.id}/auto-release`}
+                      />
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {tasks.length === 0 && <p className="text-sm text-zinc-500">No tasks.</p>}
         </div>
       </section>
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold text-zinc-200">
-          Payments ({payments.length})
-        </h2>
+        <h2 className="mb-3 text-sm font-semibold text-zinc-200">Payments ({payments.length})</h2>
         {payments.length === 0 ? (
           <p className="text-sm text-zinc-500">No payments.</p>
         ) : (
@@ -151,9 +190,7 @@ export default async function AdminUserDetailPage({
                 {payments.map((p) => (
                   <tr key={p.id} className="text-zinc-300">
                     <td className="px-3 py-2">
-                      <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs">
-                        {p.kind}
-                      </span>
+                      <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs">{p.kind}</span>
                     </td>
                     <td className="font-mono">{formatUsdc(p.amount_usdc)}</td>
                     <td className="text-xs text-zinc-500">
@@ -173,9 +210,7 @@ export default async function AdminUserDetailPage({
                         "—"
                       )}
                     </td>
-                    <td className="text-zinc-500">
-                      {formatDate(p.created_at)}
-                    </td>
+                    <td className="text-zinc-500">{formatDate(p.created_at)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -185,31 +220,30 @@ export default async function AdminUserDetailPage({
       </section>
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold text-zinc-200">
-          Disputes ({disputes.length})
-        </h2>
+        <h2 className="mb-3 text-sm font-semibold text-zinc-200">Disputes ({disputes.length})</h2>
         <div className="space-y-2">
           {disputes.map((d) => (
-            <div
-              key={d.id}
-              className="rounded-lg border border-zinc-800 bg-zinc-900 p-3 text-sm"
-            >
-              <div className="flex items-center gap-2">
-                <span
-                  className={`rounded-full px-2 py-0.5 text-xs ${statusClasses(d.status)}`}
-                >
-                  {d.status}
-                </span>
-                <span className="text-zinc-400">outcome: {d.outcome}</span>
-                {d.dispute_kind === "post_approval_contest" && (
-                  <span className="rounded-full bg-purple-900/40 px-2 py-0.5 text-xs text-purple-300">
-                    post-approval contest
+            <div key={d.id} className="rounded-lg border border-zinc-800 bg-zinc-900 p-3 text-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Link href={`/tasks/${d.task_id}`} className="text-emerald-400 hover:underline">
+                    task {d.task_id.slice(0, 8)}…
+                  </Link>
+                  <span className={`rounded-full px-2 py-0.5 text-xs ${statusClasses(d.status)}`}>
+                    {d.status}
                   </span>
+                  <span className="text-zinc-400">outcome: {d.outcome}</span>
+                  {d.dispute_kind === "post_approval_contest" && (
+                    <span className="rounded-full bg-purple-900/40 px-2 py-0.5 text-xs text-purple-300">
+                      post-approval contest
+                    </span>
+                  )}
+                </div>
+                {(d.status === "open" || d.status === "voting") && (
+                  <DisputeResolveActions disputeId={d.id} />
                 )}
               </div>
-              {d.reason && (
-                <p className="mt-1 text-xs text-zinc-500">{d.reason}</p>
-              )}
+              {d.reason && <p className="mt-1 text-xs text-zinc-500">{d.reason}</p>}
               {d.filing_fee_usdc !== null && (
                 <div className="mt-1 text-xs text-zinc-500">
                   Filing fee: {formatUsdc(d.filing_fee_usdc)}
@@ -219,8 +253,8 @@ export default async function AdminUserDetailPage({
               )}
               {d.insurance_payout_usdc !== null && (
                 <div className="mt-1 text-xs text-emerald-400">
-                  Insurance-pool payout: {formatUsdc(d.insurance_payout_usdc)} (Treasury —
-                  seller&apos;s payout was not reversed)
+                  Insurance-pool payout: {formatUsdc(d.insurance_payout_usdc)} (Treasury — seller&apos;s
+                  payout was not reversed)
                 </div>
               )}
               {d.judge_votes.length > 0 && (
@@ -252,9 +286,7 @@ export default async function AdminUserDetailPage({
               )}
             </div>
           ))}
-          {disputes.length === 0 && (
-            <p className="text-sm text-zinc-500">No disputes.</p>
-          )}
+          {disputes.length === 0 && <p className="text-sm text-zinc-500">No disputes.</p>}
         </div>
       </section>
     </div>

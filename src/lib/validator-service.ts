@@ -77,9 +77,17 @@ export async function runValidation(taskId: string, deliverable: unknown) {
   let txId: string | undefined;
 
   if (result.outcome === "approved") {
-    // Release: escrow pays the seller through AgenticCommerce.
+    // Release now — the buyer agent approved, no need to wait out the
+    // accept window. (This used to call autoRelease, the keeper/timeout
+    // path, which unconditionally requires the window to have already
+    // elapsed — calling it immediately after submission, which is exactly
+    // when the validator runs, would always have reverted. See
+    // lib/escrow.ts's escrowAction docblock.)
     if (jobId && buyerCircleWalletId) {
-      txId = await escrowAction(buyerCircleWalletId, "autoRelease(uint256)", [jobId]);
+      txId = await escrowAction(buyerCircleWalletId, "release(uint256,bytes32)", [
+        jobId,
+        "0x" + Buffer.from("validator-approve").toString("hex").padEnd(64, "0"),
+      ]);
     }
     await supabase.from("tasks").update({ status: "accepted", accepted_at: new Date().toISOString() }).eq("id", taskId);
   } else {

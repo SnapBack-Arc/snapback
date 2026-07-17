@@ -1,6 +1,7 @@
 import "server-only";
 import { createServiceSupabase } from "@/lib/supabase/server";
 import { ensureTreasuryWallet } from "@/lib/app-wallets";
+import { isWalletFlagged } from "@/lib/wallet-flags";
 import { parseSpec, type ParsedSpec } from "@/lib/estimator/parser";
 import {
   evaluateGate,
@@ -107,6 +108,10 @@ export async function submitQuoteRequest(
   payerWalletId: string,
   rawText: string,
 ): Promise<SubmitResult> {
+  if (await isWalletFlagged(payerWalletId)) {
+    throw new Error("This account is paused by an administrator and can't request new quotes.");
+  }
+
   const supabase = createServiceSupabase();
   const spec = await parseSpec(rawText);
 

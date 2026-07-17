@@ -4,6 +4,13 @@ import { getSession } from "@/lib/session";
 import { getActiveListings } from "@/lib/listings";
 import { formatUsdc } from "@/lib/format";
 import { isResearchSourcingListing } from "@/lib/listing-agents";
+import { estimateResearchSourcingCostUsdc } from "@/lib/agents/research-sourcing-pricing";
+
+// The cheapest a real Research & Sourcing quote can come out to (difficulty
+// 1, no scope_quantity) — the floor of the same per-task pricing function
+// the submission flow charges from, not a hand-picked number that could
+// drift out of sync with it.
+const RESEARCH_SOURCING_FLOOR_USDC = estimateResearchSourcingCostUsdc(1, null);
 
 function slaSummary(sla: unknown): string | null {
   if (!sla || typeof sla !== "object") return null;
@@ -57,7 +64,9 @@ export default async function MarketplacePage() {
                       )}
                     </div>
                     <span className="shrink-0 font-mono text-sm text-zinc-200">
-                      {formatUsdc(listing.price_usdc)}
+                      {isResearchSourcingListing(listing.sla)
+                        ? `from ~${formatUsdc(RESEARCH_SOURCING_FLOOR_USDC)} (priced per task)`
+                        : formatUsdc(listing.price_usdc)}
                     </span>
                   </div>
                   {listing.description && (
