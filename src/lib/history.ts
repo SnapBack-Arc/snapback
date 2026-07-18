@@ -53,11 +53,23 @@ export async function getTaskById(
     return null;
   }
 
+  // Filing-fee payments carry no task_id (lib/disputes/service.ts's
+  // recordDisputeFiling links them to a dispute only, via
+  // metadata.dispute_id) — a plain task_id filter silently drops them, even
+  // though the dispute row itself points straight at one via
+  // filing_fee_payment_id. Pull those in by id alongside the task-scoped set
+  // so the timeline can show the fee amount and its on-chain status.
+  const filingFeePaymentIds = (task.disputes ?? [])
+    .map((d) => d.filing_fee_payment_id)
+    .filter((id): id is string => !!id);
+
   const [{ data: payments }, { data: validations }, { data: jobEvents }] = await Promise.all([
     supabase
       .from("payments")
       .select("*")
-      .eq("task_id", taskId)
+      .or(
+        [`task_id.eq.${taskId}`, ...(filingFeePaymentIds.length > 0 ? [`id.in.(${filingFeePaymentIds.join(",")})`] : [])].join(","),
+      )
       .order("created_at", { ascending: true }),
     supabase
       .from("validations")

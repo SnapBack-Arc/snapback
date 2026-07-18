@@ -51,47 +51,201 @@ const PAYMENT_KIND_LABELS: Record<string, string> = {
   insurance_payout: "Insurance payout",
   submission: "Deliverable submission (on-chain)",
   validation_fee: "Validator cost-recovery fee",
+  dispute_contingency: "Dispute contingency (held)",
 };
 
 export function paymentKindLabel(kind: string): string {
   return PAYMENT_KIND_LABELS[kind] ?? kind;
 }
 
-/** "Buyer" / "Seller" for a wallet id that belongs to this task, else null. */
-function partyLabel(walletId: string | null, task: TaskDetail): string | null {
-  if (!walletId) return null;
-  if (walletId === task.payer_wallet_id) return "Buyer";
-  if (walletId === task.payee_wallet_id) return "Seller";
-  return null;
-}
-
-/** Plain-language "from -> to" for one payment row. */
-export function paymentDirectionLabel(payment: PaymentRow, task: TaskDetail): string {
-  const metadata = (payment.metadata ?? {}) as { treasury_address?: string };
-
-  const from = partyLabel(payment.from_wallet_id, task) ?? (payment.from_wallet_id ? "Other wallet" : "—");
-  let to = partyLabel(payment.to_wallet_id, task);
-  if (!to) {
-    if (metadata.treasury_address) {
-      to = "Treasury";
-    } else if (payment.kind === "escrow") {
-      // The escrow lock row's to_wallet_id is always null (the contract
-      // itself holds the funds, not another wallets row) — its real
-      // destination is whichever way the job settled, tracked by this same
-      // row's status transitioning as SnapBackEscrow events reconcile it
-      // (see lib/webhooks/handle-notification.ts).
-      if (payment.status === "escrowed") to = "Escrow (locked on-chain)";
-      else if (payment.status === "released") to = "Seller";
-      else if (payment.status === "refunded" || payment.status === "snapped_back") to = "Buyer";
-      else to = "—";
-    } else {
-      to = payment.to_wallet_id ? "Other wallet" : "—";
-    }
-  }
-  return `${from} → ${to}`;
-}
-
 /** True if this payment row has real on-chain evidence, not just a ledger entry. */
 export function isOnChainConfirmed(payment: PaymentRow): boolean {
   return !!payment.tx_hash;
+}
+
+/**
+ * Chronological, merged task timeline — replaces the old grouped-by-category
+ * layout (Request / Validator verdict / Dispute / Money trail as separate
+ * sections) with one top-to-bottom story. Every event carries its own real
+ * timestamp so events from different tables (payments, job_events,
+ * validations, disputes, judge_votes) interleave in the order they actually
+ * happened, instead of being bucketed by which table they came from.
+ */
+export type TimelineMoney = {
+  label: string;
+  amountUsdc: number;
+  onChain: boolean;
+  txHash: string | null;
+};
+
+export type TimelineEvent =
+  | { id: string; at: string; kind: "submitted"; description: string | null; agent: string }
+  | { id: string; at: string; kind: "quoted"; amountUsdc: number; accepted: boolean }
+  | { id: string; at: string; kind: "funded"; items: TimelineMoney[] }
+  | { id: string; at: string; kind: "job_event"; eventName: string; contract: string; txHash: string | null }
+  | { id: string; at: string; kind: "validated"; outcome: string; rationale: string | null }
+  | { id: string; at: string; kind: "settlement"; label: string; items: TimelineMoney[] }
+  | {
+      id: string;
+      at: string;
+      kind: "dispute_filed";
+      disputeKind: "standard" | "post_approval_contest";
+      reason: string | null;
+      fee: TimelineMoney | null;
+    }
+  | { id: string; at: string; kind: "judge_votes"; votes: { choice: string; rationale: string | null }[] }
+  | {
+      id: string;
+      at: string;
+      kind: "dispute_resolved";
+      disputeKind: "standard" | "post_approval_contest";
+      outcome: "favor_payer" | "favor_payee" | "split" | "pending";
+      forcedByAdmin: boolean;
+      settlements: TimelineMoney[];
+    }
+  | { id: string; at: string; kind: "insurance_payout"; item: TimelineMoney };
+
+/** Payment kinds all collected together at task-funding time — shown as one grouped event. */
+const FUNDING_KINDS = new Set(["escrow", "platform_fee", "validation_fee", "dispute_contingency", "quote_fee"]);
+
+function toMoney(payment: PaymentRow, label: string): TimelineMoney {
+  return {
+    label,
+    amountUsdc: payment.amount_usdc,
+    onChain: isOnChainConfirmed(payment),
+    txHash: payment.tx_hash,
+  };
+}
+
+/**
+ * Same as toMoney, but for a held payment's *collection* moment specifically
+ * (the funding-time lock, or a dispute's filing fee at filing time) — a held
+ * payment that's since been refunded has its tx_hash overwritten with the
+ * refund's tx (refundOrReleaseHeldPayment in lib/disputes/service.ts), with
+ * the original preserved at metadata.collected_tx_hash. Without this, an
+ * event describing what happened at collection time would show a tx that
+ * didn't exist yet — the later refund's hash — which is wrong evidence for
+ * that moment.
+ */
+function toMoneyAtCollection(payment: PaymentRow, label: string): TimelineMoney {
+  const metadata = (payment.metadata ?? {}) as { collected_tx_hash?: string };
+  const txHash = metadata.collected_tx_hash ?? payment.tx_hash;
+  return { label, amountUsdc: payment.amount_usdc, onChain: !!txHash, txHash: txHash ?? null };
+}
+
+export function buildTaskTimeline(task: TaskDetail): TimelineEvent[] {
+  const events: TimelineEvent[] = [];
+
+  events.push({
+    id: `${task.id}:submitted`,
+    at: task.created_at,
+    kind: "submitted",
+    description: task.description,
+    agent: task.listings?.title ?? "Unknown seller",
+  });
+
+  for (const q of task.quotes) {
+    events.push({ id: `quote:${q.id}`, at: q.created_at, kind: "quoted", amountUsdc: q.amount_usdc, accepted: q.accepted });
+  }
+
+  const fundingPayments = task.payments.filter((p) => FUNDING_KINDS.has(p.kind));
+  if (fundingPayments.length > 0) {
+    const anchor = fundingPayments.reduce(
+      (min, p) => (p.created_at < min ? p.created_at : min),
+      fundingPayments[0].created_at,
+    );
+    events.push({
+      id: `${task.id}:funded`,
+      at: anchor,
+      kind: "funded",
+      items: fundingPayments.map((p) => toMoneyAtCollection(p, paymentKindLabel(p.kind))),
+    });
+  }
+
+  for (const je of task.jobEvents) {
+    events.push({ id: je.id, at: je.created_at, kind: "job_event", eventName: je.event_name, contract: je.contract, txHash: je.tx_hash });
+  }
+
+  for (const v of task.validations) {
+    events.push({ id: v.id, at: v.created_at, kind: "validated", outcome: v.outcome, rationale: v.rationale });
+  }
+
+  // The escrow lock's status transitioning away from "escrowed" (release /
+  // refund / snapback, reconciled by the on-chain event webhook — see
+  // lib/webhooks/handle-notification.ts) is a distinct later moment from the
+  // funding-time lock above: same row, different point in time.
+  const escrowPayment = task.payments.find((p) => p.kind === "escrow");
+  if (escrowPayment && escrowPayment.status !== "escrowed" && escrowPayment.updated_at !== escrowPayment.created_at) {
+    const label =
+      escrowPayment.status === "released"
+        ? "Escrow released to seller"
+        : escrowPayment.status === "refunded"
+          ? "Escrow refunded to buyer"
+          : escrowPayment.status === "snapped_back"
+            ? "Buyer snapped back (early reclaim)"
+            : "Escrow settled";
+    events.push({
+      id: `${escrowPayment.id}:settled`,
+      at: escrowPayment.updated_at,
+      kind: "settlement",
+      label,
+      items: [toMoney(escrowPayment, label)],
+    });
+  }
+
+  for (const d of task.disputes) {
+    const filingFeePayment = task.payments.find((p) => p.id === d.filing_fee_payment_id) ?? null;
+
+    events.push({
+      id: `${d.id}:filed`,
+      at: d.created_at,
+      kind: "dispute_filed",
+      disputeKind: d.dispute_kind,
+      reason: d.reason,
+      fee: filingFeePayment ? toMoneyAtCollection(filingFeePayment, "Filing fee") : null,
+    });
+
+    if (d.judge_votes.length > 0) {
+      const votesAt = d.judge_votes.reduce((max, v) => (v.created_at > max ? v.created_at : max), d.judge_votes[0].created_at);
+      events.push({
+        id: `${d.id}:votes`,
+        at: votesAt,
+        kind: "judge_votes",
+        votes: d.judge_votes.map((v) => ({ choice: v.choice, rationale: v.rationale })),
+      });
+    }
+
+    if (d.status === "resolved" && d.resolved_at) {
+      const settlements: TimelineMoney[] = [];
+      if (filingFeePayment && filingFeePayment.status !== "escrowed") {
+        settlements.push(toMoney(filingFeePayment, "Filing fee"));
+      }
+      const contingencyPayment = task.payments.find((p) => p.kind === "dispute_contingency" && p.status !== "escrowed");
+      if (contingencyPayment) settlements.push(toMoney(contingencyPayment, "Dispute contingency"));
+
+      events.push({
+        id: `${d.id}:resolved`,
+        at: d.resolved_at,
+        kind: "dispute_resolved",
+        disputeKind: d.dispute_kind,
+        outcome: d.outcome,
+        forcedByAdmin: d.judge_votes.length === 0,
+        settlements,
+      });
+
+      if (d.dispute_kind === "post_approval_contest" && d.outcome === "favor_payer" && d.insurance_payout_payment_id) {
+        const insurancePayment = task.payments.find((p) => p.id === d.insurance_payout_payment_id);
+        if (insurancePayment) {
+          events.push({
+            id: `${d.id}:insurance`,
+            at: insurancePayment.created_at,
+            kind: "insurance_payout",
+            item: toMoney(insurancePayment, "Insurance payout"),
+          });
+        }
+      }
+    }
+  }
+
+  return events.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
 }
