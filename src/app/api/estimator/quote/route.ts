@@ -61,6 +61,10 @@ export async function POST(request: Request) {
         guaranteed_total_usdc: guaranteedTotal,
         seller_cost_estimate_usdc: Number(result.session.seller_cost_estimate_usdc ?? 0),
         happy_path_fee_usdc: Number(result.session.happy_path_fee_usdc ?? 0),
+        // Fixed fee recovering the validator's real LLM-call cost — always
+        // charged (validation always runs), folded into guaranteed_total_usdc
+        // like happy_path_fee_usdc, shown as its own line.
+        validation_fee_usdc: Number(result.session.validation_fee_usdc ?? 0),
         // Contingent — shown alongside, never folded into guaranteed_total_usdc.
         disclosed_contingent_fee_pct: contingentPct,
         contingent_disclosure: contingentPct

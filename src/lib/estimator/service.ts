@@ -206,6 +206,7 @@ export async function submitQuoteRequest(
       normalized_spec: spec as unknown as Database["public"]["Tables"]["estimator_sessions"]["Update"]["normalized_spec"],
       seller_cost_estimate_usdc: quote.seller_cost_estimate_usdc,
       happy_path_fee_usdc: quote.happy_path_fee_usdc,
+      validation_fee_usdc: quote.validation_fee_usdc,
       guaranteed_total_usdc: quote.guaranteed_total_usdc,
       disclosed_contingent_fee_pct: quote.disclosed_contingent_fee_pct,
       matched_listing_ids: quote.matched_listing_ids as never,
@@ -243,6 +244,8 @@ export type CreditResult = {
   remaining_due_usdc: number;
   /** Buyer-side happy-path skim, routed to Treasury — seller's quoted amount is untouched. */
   platform_fee_usdc: number;
+  /** Fixed fee recovering the validator's real LLM-call cost, routed to Treasury. */
+  validation_fee_usdc: number;
 };
 
 /**
@@ -277,6 +280,7 @@ export async function creditSessionToTask(
 
   const guaranteedTotal = Number(session.guaranteed_total_usdc ?? 0);
   const platformFee = Number(session.happy_path_fee_usdc ?? 0);
+  const validationFee = Number(session.validation_fee_usdc ?? 0);
   const contingentPct = session.disclosed_contingent_fee_pct;
 
   // Buyer-side skim, added on top and routed to Treasury — never deducted
@@ -298,11 +302,32 @@ export async function creditSessionToTask(
     });
   }
 
+  // Fixed fee recovering the validator's real LLM-call cost (lib/validator.ts)
+  // — charged on every task regardless of approve/reject, unlike the
+  // contingent arbitration fee, since the validator call itself always runs.
+  if (validationFee > 0) {
+    const treasury = await ensureTreasuryWallet();
+    await supabase.from("payments").insert({
+      task_id: taskId,
+      from_wallet_id: session.payer_wallet_id,
+      kind: "validation_fee",
+      status: "released",
+      amount_usdc: validationFee,
+      chain_id: ARC_CHAIN_ID,
+      metadata: {
+        estimator_session_id: sessionId,
+        treasury_address: treasury.address,
+        reason: "validator_cost_recovery",
+      },
+    });
+  }
+
   await supabase
     .from("tasks")
     .update({
       guaranteed_total_usdc: guaranteedTotal || null,
       disclosed_contingent_fee_pct: contingentPct,
+      validation_fee_usdc: validationFee || null,
     })
     .eq("id", taskId);
 
@@ -316,6 +341,7 @@ export async function creditSessionToTask(
     guaranteed_total_usdc: guaranteedTotal,
     remaining_due_usdc: Math.max(0, guaranteedTotal - quoteFeeCredit),
     platform_fee_usdc: platformFee,
+    validation_fee_usdc: validationFee,
   };
 }
 
@@ -382,6 +408,7 @@ async function createSession(
       last_activity_at: new Date().toISOString(),
       seller_cost_estimate_usdc: quote.seller_cost_estimate_usdc,
       happy_path_fee_usdc: quote.happy_path_fee_usdc,
+      validation_fee_usdc: quote.validation_fee_usdc,
       guaranteed_total_usdc: quote.guaranteed_total_usdc,
       disclosed_contingent_fee_pct: quote.disclosed_contingent_fee_pct,
       matched_listing_ids: quote.matched_listing_ids as never,

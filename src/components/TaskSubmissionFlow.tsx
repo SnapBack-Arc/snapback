@@ -19,6 +19,7 @@ type QuoteResponse = {
     guaranteed_total_usdc: number;
     seller_cost_estimate_usdc: number;
     happy_path_fee_usdc: number;
+    validation_fee_usdc: number;
     disclosed_contingent_fee_pct: number;
     contingent_disclosure: string | null;
     within_budget_ceiling: boolean;
@@ -273,7 +274,8 @@ export default function TaskSubmissionFlow({
             </div>
             <p className="text-xs text-zinc-500">
               Seller cost estimate {formatUsdc(quote.quote.seller_cost_estimate_usdc)} + platform
-              fee {formatUsdc(quote.quote.happy_path_fee_usdc)}
+              fee {formatUsdc(quote.quote.happy_path_fee_usdc)} + validation fee{" "}
+              {formatUsdc(quote.quote.validation_fee_usdc)}
             </p>
             {quote.quote.contingent_disclosure && (
               <p className="text-xs text-zinc-500">{quote.quote.contingent_disclosure}</p>

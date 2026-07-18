@@ -288,6 +288,7 @@ export type Database = {
           task_id: string | null
           treasury_swept_usdc: number
           updated_at: string
+          validation_fee_usdc: number | null
         }
         Insert: {
           attempt_count?: number
@@ -310,6 +311,7 @@ export type Database = {
           task_id?: string | null
           treasury_swept_usdc?: number
           updated_at?: string
+          validation_fee_usdc?: number | null
         }
         Update: {
           attempt_count?: number
@@ -332,6 +334,7 @@ export type Database = {
           task_id?: string | null
           treasury_swept_usdc?: number
           updated_at?: string
+          validation_fee_usdc?: number | null
         }
         Relationships: [
           {
@@ -766,6 +769,7 @@ export type Database = {
           status: Database["public"]["Enums"]["task_status"]
           title: string
           updated_at: string
+          validation_fee_usdc: number | null
         }
         Insert: {
           accepted_at?: string | null
@@ -784,6 +788,7 @@ export type Database = {
           status?: Database["public"]["Enums"]["task_status"]
           title: string
           updated_at?: string
+          validation_fee_usdc?: number | null
         }
         Update: {
           accepted_at?: string | null
@@ -802,6 +807,7 @@ export type Database = {
           status?: Database["public"]["Enums"]["task_status"]
           title?: string
           updated_at?: string
+          validation_fee_usdc?: number | null
         }
         Relationships: [
           {
@@ -1074,6 +1080,7 @@ export type Database = {
         | "platform_fee"
         | "insurance_payout"
         | "submission"
+        | "validation_fee"
       payment_status:
         | "pending"
         | "escrowed"
@@ -1260,6 +1267,7 @@ export const Constants = {
         "platform_fee",
         "insurance_payout",
         "submission",
+        "validation_fee",
       ],
       payment_status: [
         "pending",
