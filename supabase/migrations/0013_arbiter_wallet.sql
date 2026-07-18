@@ -1,0 +1,22 @@
+-- ─────────────────────────────────────────────────────────────
+-- SnapBack — priority fix: force-resolve didn't actually resolve on-chain.
+--
+-- SnapBackEscrow.resolveDispute is onlyArbiter, and `arbiter` was pointed at
+-- the JudgeRegistry contract — which nothing calls today (the real judge
+-- pool has zero staked judges, and JudgeRegistry.finalize is onlyOwner,
+-- gated by the local Foundry deployer keystore, never a live wallet this
+-- app can drive). The admin "force-resolve dispute" route therefore only
+-- ever updated the off-chain `disputes` row: the on-chain job stayed
+-- Status.Submitted/disputed=true forever, and the buyer's or seller's funds
+-- never actually moved. Confirmed live: a resolved dispute's escrow payment
+-- row stayed stuck 'escrowed' with no corresponding DisputeResolved event.
+--
+-- Fix: a new singleton `arbiter` app wallet (Circle-managed EOA, same
+-- pattern as `delegate`/`treasury`) that SnapBackEscrow.arbiter is
+-- repointed at via a one-time owner-gated `setArbiter` call (see
+-- contracts/script/SetArbiterToAppWallet.s.sol). The admin force-resolve
+-- route now signs resolveDispute(jobId, favorBuyer, reason) with this
+-- wallet through Circle before touching any off-chain row.
+-- ─────────────────────────────────────────────────────────────
+
+alter type app_wallet_role add value if not exists 'arbiter';

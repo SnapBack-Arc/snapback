@@ -8,16 +8,23 @@ import { logAdminAction } from "@/lib/admin-audit";
  * Body: { outcome: "favor_payer" | "favor_payee", confirmText: "CONFIRM" }
  *
  * Records a verdict: settles the filing fee (forfeit on a loss, refund on a
- * win) and updates the buyer's dispute-abuse stats.
+ * win), updates the buyer's dispute-abuse stats, and — for a `standard`
+ * dispute — actually resolves the frozen job on-chain by calling
+ * SnapBackEscrow.resolveDispute(jobId, favorBuyer, reason) as the contract's
+ * `arbiter` (lib/disputes/service.ts:resolveDispute).
  *
  * There is no real judge-draw/vote pipeline wired up yet (JudgeRegistry's
  * on-chain selectPanel/finalize are real but owner-gated by the Foundry
  * deployer key, never a live Circle wallet, and the real judgePool has no
  * staked judges) — this route is the admin's manual override in the
  * meantime, the "force-resolve a stuck dispute" admin-dashboard action.
- * It settles the off-chain bookkeeping only; it does not itself touch the
- * on-chain escrow (SnapBackEscrow.resolveDispute is onlyArbiter = the
- * JudgeRegistry contract, not this route).
+ *
+ * PRIORITY FIX: SnapBackEscrow.arbiter used to be JudgeRegistry — a contract
+ * nothing calls — so this route previously only ever updated the off-chain
+ * `disputes` row while the on-chain job stayed frozen and funds never moved.
+ * `arbiter` is now repointed (contracts/script/SetArbiterToAppWallet.s.sol)
+ * at a Circle-managed `arbiter` app_wallet this route signs through, same
+ * as every other on-chain call in this app — never a raw key.
  */
 export async function POST(
   request: Request,

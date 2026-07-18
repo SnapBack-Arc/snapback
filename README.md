@@ -79,14 +79,18 @@ anything, then dispatches by `notificationType`
   Every observed event is also logged to `job_events`, which the task detail
   page renders as a small on-chain activity feed.
 
-  **Known limitation:** `DisputeResolved` reconciles the `payments` row but
-  not the `disputes` row (status/outcome) or `buyer_dispute_stats` — those
-  are only ever updated by the admin force-resolve route
-  (`lib/disputes/service.ts:resolveDispute`). A real on-chain verdict (once
-  JudgeRegistry has staked judges — see below) would settle funds correctly
-  but leave its `disputes` row permanently `open` with no outcome recorded
-  and no effect on buyer abuse stats. Deferred until the judge pipeline is
-  actually live.
+  For a force-resolved `standard` dispute, this event is now the direct
+  result of the same admin action that updates the `disputes` row
+  (`lib/disputes/service.ts:resolveDispute` calls
+  `SnapBackEscrow.resolveDispute` on-chain as the contract's `arbiter`
+  *before* touching any off-chain row — see the priority-fix note there),
+  so the two stay in sync. **Known limitation:** this webhook path is still
+  the only thing that would reconcile `payments` for a *real* judge-panel
+  verdict (once JudgeRegistry has staked judges — see below); that path
+  would settle funds correctly but leave its `disputes` row permanently
+  `open` with no outcome recorded and no effect on buyer abuse stats,
+  since nothing but the admin route updates those today. Deferred until
+  the judge pipeline is actually live.
 - `transactions.*` — wallet-level tx status, correlated against `payments`
   rows that carry a `circle_tx_id` (today: `lib/x402.ts`, the Gateway deposit
   route). Used to catch a transaction that actually failed on-chain (flips
@@ -100,7 +104,25 @@ the real judge pool has zero staked judges today, so the call would revert
 regardless. The webhook reflects `PanelSelected`/`VoteCast`/`VerdictReached`
 if they ever fire, but never calls `selectPanel` itself; the admin dashboard's
 "force-resolve dispute" action remains the real, live path for a stuck
-dispute.
+dispute — and, as of the priority fix below, actually settles it on-chain
+rather than only in the database.
+
+**Force-resolve is now a real on-chain call, not just a DB update.**
+`SnapBackEscrow.resolveDispute` is `onlyArbiter`, and `arbiter` used to be
+set to the JudgeRegistry contract address — which nothing calls (see above),
+so every force-resolve previously updated only the `disputes` row while the
+on-chain job stayed frozen (`disputed = true`) forever and the buyer's or
+seller's funds never moved. `arbiter` is now repointed
+(`contracts/script/SetArbiterToAppWallet.s.sol`, run once with the deployer
+keystore) at a new singleton `arbiter` app wallet — a Circle-managed EOA,
+provisioned the same way as `delegate`/`treasury`
+(`scripts/provision-arbiter-wallet.ts`, `lib/app-wallets.ts`'s
+`ensureArbiterWallet`) — which the admin route now signs
+`resolveDispute(jobId, favorBuyer, reason)` with directly
+(`lib/escrow.ts`'s `resolveJobDispute`) before touching any off-chain row.
+Only applies to `standard` disputes — a `post_approval_contest` never froze
+anything on-chain (the seller was already auto-paid), so it settles a buyer
+win from Treasury's insurance pool instead, same as before.
 
 **Known limitation: no evidence/rebuttal submission during a dispute.**
 Once a dispute is open (buyer-filed, seller auto-disputed by the validator,

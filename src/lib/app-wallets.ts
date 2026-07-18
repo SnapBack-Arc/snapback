@@ -58,3 +58,12 @@ export async function ensureAppWallet(
 
 export const ensureDelegateWallet = () => ensureAppWallet("delegate");
 export const ensureTreasuryWallet = () => ensureAppWallet("treasury");
+
+/**
+ * SnapBackEscrow's on-chain `arbiter` — the only address resolveDispute()
+ * accepts calls from. Provisioned as a Circle-managed EOA like
+ * delegate/treasury; SnapBackEscrow.arbiter is repointed at its address via
+ * a one-time owner-gated setArbiter() call (see
+ * contracts/script/SetArbiterToAppWallet.s.sol), not embedded as a raw key.
+ */
+export const ensureArbiterWallet = () => ensureAppWallet("arbiter");

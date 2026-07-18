@@ -1,8 +1,9 @@
 import "server-only";
 import { createServiceSupabase } from "@/lib/supabase/server";
-import { ensureTreasuryWallet } from "@/lib/app-wallets";
+import { ensureTreasuryWallet, ensureArbiterWallet } from "@/lib/app-wallets";
 import { generateEducationalFeedback } from "@/lib/disputes/feedback";
 import { ARC_CHAIN_ID } from "@/lib/arc";
+import { resolveJobDispute, waitForTxHash } from "@/lib/escrow";
 import type { Database } from "@/lib/supabase/types";
 
 /**
@@ -160,6 +161,21 @@ export async function recordDisputeFiling(params: {
  *
  * `favor_payer` = buyer wins (refund); `favor_payee` = buyer loses (seller
  * keeps the payment, filing fee forfeited).
+ *
+ * PRIORITY FIX: a `standard` dispute means the job is frozen on-chain
+ * (SnapBackEscrow.dispute() set `disputed = true`) — settling it here means
+ * actually calling SnapBackEscrow.resolveDispute(jobId, favorBuyer, reason)
+ * as the contract's `arbiter`, not just flipping this row. That call is made
+ * first and must succeed (its tx must confirm, not just submit) before any
+ * off-chain row changes below: a call that reverts throws out of this
+ * function entirely, leaving the dispute `open` rather than recording a
+ * "resolved" outcome the chain never actually applied — which is exactly the
+ * bug this fixes (force-resolve used to only ever touch this table, so the
+ * on-chain job stayed frozen and funds never moved). `post_approval_contest`
+ * disputes never froze anything on-chain (the seller was already paid,
+ * auto-approved) — a buyer win there is settled from Treasury's insurance
+ * pool by settleContestWin below, not the escrow contract, so no on-chain
+ * call happens for that kind.
  */
 export async function resolveDispute(
   disputeId: string,
@@ -174,6 +190,33 @@ export async function resolveDispute(
   if (!dispute) throw new Error("Dispute not found");
   if (dispute.status === "resolved") throw new Error("Dispute already resolved");
 
+  const buyerWon = outcome === "favor_payer";
+
+  if (dispute.dispute_kind !== "post_approval_contest") {
+    const { data: task } = await supabase
+      .from("tasks")
+      .select("metadata")
+      .eq("id", dispute.task_id)
+      .single();
+    const jobId = (task?.metadata as { erc8183_job_id?: string } | null)?.erc8183_job_id;
+    if (!jobId) {
+      throw new Error(
+        "Dispute's task has no on-chain job id (erc8183_job_id) — cannot force-resolve a job that was never created on-chain.",
+      );
+    }
+
+    const arbiter = await ensureArbiterWallet();
+    const reason =
+      "0x" + Buffer.from("admin-force-resolve").toString("hex").padEnd(64, "0");
+    const txId = await resolveJobDispute(arbiter.circle_wallet_id, jobId, buyerWon, reason);
+    if (!txId) {
+      throw new Error("resolveDispute did not return a transaction id");
+    }
+    // Rejects if the tx enters a terminal failure state (including a revert
+    // that still produced a txHash) — see lib/escrow.ts's waitForTxHash.
+    await waitForTxHash(txId);
+  }
+
   await supabase
     .from("disputes")
     .update({
@@ -183,7 +226,6 @@ export async function resolveDispute(
     })
     .eq("id", disputeId);
 
-  const buyerWon = outcome === "favor_payer";
   const walletId = dispute.opened_by_wallet;
 
   if (dispute.filing_fee_payment_id) {

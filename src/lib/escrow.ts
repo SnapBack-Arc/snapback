@@ -38,6 +38,7 @@ const SIG = {
   approve: "approve(address,uint256)",
   fund: "fund(uint256)",
   submit: "submit(uint256,bytes32)",
+  resolveDispute: "resolveDispute(uint256,bool,bytes32)",
 } as const;
 
 /**
@@ -281,6 +282,33 @@ export async function escrowAction(
     contractAddress: SNAPBACK_ESCROW,
     abiFunctionSignature: fn,
     abiParameters: args,
+    fee: FEE,
+  });
+  return res.data?.id;
+}
+
+/**
+ * Arbiter settles a disputed job on-chain — the priority-fix counterpart to
+ * `escrowAction`'s buyer-gated calls. `resolveDispute` is `onlyArbiter`
+ * (SnapBackEscrow.sol), and `arbiter` is now the app's Circle-managed
+ * `arbiter` app_wallet (see lib/app-wallets.ts's ensureArbiterWallet and
+ * contracts/script/SetArbiterToAppWallet.s.sol — arbiter used to be
+ * JudgeRegistry, which nothing calls, so every force-resolve previously
+ * only updated the off-chain `disputes` row while the on-chain job stayed
+ * frozen forever).
+ */
+export async function resolveJobDispute(
+  arbiterCircleWalletId: string,
+  jobId: string,
+  favorBuyer: boolean,
+  reason: string,
+): Promise<string | undefined> {
+  const client = getDeveloperControlledWalletsClient();
+  const res = await client.createContractExecutionTransaction({
+    walletId: arbiterCircleWalletId,
+    contractAddress: SNAPBACK_ESCROW,
+    abiFunctionSignature: SIG.resolveDispute,
+    abiParameters: [jobId, favorBuyer, reason],
     fee: FEE,
   });
   return res.data?.id;
