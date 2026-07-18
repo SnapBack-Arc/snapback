@@ -152,8 +152,24 @@ async function handleContractEvent(notification: Record<string, unknown>): Promi
         .eq("id", task.id)
         .neq("status", "disputed");
       break;
+    case "DisputeResolved":
+      // On-chain settlement moved funds already — reconcile the escrow
+      // payment row the same way Released/SnappedBack do. NOTE: this does
+      // NOT touch the `disputes` row (status/outcome) or buyer_dispute_stats
+      // — those are only ever updated by the admin force-resolve route
+      // (lib/disputes/service.ts:resolveDispute), since the real judge pool
+      // has zero staked judges today and nothing else calls
+      // SnapBackEscrow.resolveDispute yet. See README's "Event-driven state"
+      // section for the known reconciliation gap this leaves.
+      await supabase
+        .from("payments")
+        .update({ status: decoded.args.favorBuyer ? "refunded" : "released" })
+        .eq("task_id", task.id)
+        .eq("kind", "escrow")
+        .eq("status", "escrowed");
+      break;
     default:
-      // Funded, Submitted, DisputeResolved, and every JudgeRegistry event
+      // Funded, Submitted, and every JudgeRegistry event
       // (PanelSelected/PanelEscalated/VoteCast/VerdictReached): observed via
       // the job_events row above only. JudgeRegistry's panel-draw path is
       // owner-gated by a local Foundry deployer key and the real judge pool

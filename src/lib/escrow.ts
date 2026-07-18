@@ -208,6 +208,13 @@ export async function submitDeliverable(
  * it immediately after a fresh submission — which is exactly when the
  * validator runs — would always have reverted. `release` is the actual
  * "buyer approved early" path; see SnapBackEscrow.sol's docblock.
+ *
+ * `fn` deliberately excludes `snapback(uint256,bytes32)`: the contract lets
+ * the client refund itself instantly, with no dispute filing, no fee, and no
+ * judge review (see SnapBackEscrow.sol's `snapback`). Do not widen this union
+ * to include it — that would reopen a free/uncosted buyer-reject path. A
+ * buyer rejection belongs on the `dispute` path above, which is fee-costed
+ * and judge-reviewed.
  */
 export async function escrowAction(
   circleWalletId: string,

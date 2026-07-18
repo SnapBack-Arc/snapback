@@ -74,8 +74,19 @@ anything, then dispatches by `notificationType`
   the ABI fragments in `src/lib/webhooks/events.ts`. This is what confirms an
   on-chain action actually took effect (funded, submitted, released, disputed,
   refunded, judge votes/verdicts) and reconciles `payments`/`tasks` status
-  accordingly. Every observed event is also logged to `job_events`, which the
-  task detail page renders as a small on-chain activity feed.
+  accordingly — including `DisputeResolved`, which flips the escrow
+  `payments` row to `refunded`/`released` off the event's `favorBuyer` flag.
+  Every observed event is also logged to `job_events`, which the task detail
+  page renders as a small on-chain activity feed.
+
+  **Known limitation:** `DisputeResolved` reconciles the `payments` row but
+  not the `disputes` row (status/outcome) or `buyer_dispute_stats` — those
+  are only ever updated by the admin force-resolve route
+  (`lib/disputes/service.ts:resolveDispute`). A real on-chain verdict (once
+  JudgeRegistry has staked judges — see below) would settle funds correctly
+  but leave its `disputes` row permanently `open` with no outcome recorded
+  and no effect on buyer abuse stats. Deferred until the judge pipeline is
+  actually live.
 - `transactions.*` — wallet-level tx status, correlated against `payments`
   rows that carry a `circle_tx_id` (today: `lib/x402.ts`, the Gateway deposit
   route). Used to catch a transaction that actually failed on-chain (flips
@@ -90,6 +101,17 @@ regardless. The webhook reflects `PanelSelected`/`VoteCast`/`VerdictReached`
 if they ever fire, but never calls `selectPanel` itself; the admin dashboard's
 "force-resolve dispute" action remains the real, live path for a stuck
 dispute.
+
+**Known limitation: no evidence/rebuttal submission during a dispute.**
+Once a dispute is open (buyer-filed, seller auto-disputed by the validator,
+or a post-approval contest), neither party has a way to actively submit
+additional evidence or a rebuttal before it's resolved — both sides are
+passive once filed. This applies symmetrically to buyers and sellers; it
+isn't specific to validator rejections (sellers already get judge-reviewed
+disputes at zero cost on every rejection, so no separate seller-side contest
+path is needed — see `src/lib/disputes/contest.ts`'s docblock for why that
+asymmetry only exists on the buyer/auto-approve side). Noted as a future
+improvement, not built yet.
 
 **The task detail stepper** updates live from webhook-driven `job_events`/
 `payments` writes, with a client-side poll (`TaskLiveUpdates`, 6s, only while
