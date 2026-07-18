@@ -16,9 +16,14 @@ export default async function AdminTreasuryPage() {
     <div className="mx-auto max-w-5xl space-y-6 p-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-white">Treasury</h1>
-        <Link href="/admin/users" className="text-sm text-emerald-400 hover:underline">
-          User list →
-        </Link>
+        <div className="flex gap-4">
+          <Link href="/admin/history" className="text-sm text-emerald-400 hover:underline">
+            Task history →
+          </Link>
+          <Link href="/admin/users" className="text-sm text-emerald-400 hover:underline">
+            User list →
+          </Link>
+        </div>
       </div>
 
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
