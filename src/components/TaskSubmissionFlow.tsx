@@ -63,10 +63,15 @@ function PlaceholderSlot() {
   );
 }
 
-export default function TaskSubmissionFlow() {
+export default function TaskSubmissionFlow({
+  initialSpecText,
+}: {
+  /** Pre-fills the request textarea (still fully editable) — see app/page.tsx. */
+  initialSpecText?: string;
+}) {
   const router = useRouter();
 
-  const [specText, setSpecText] = useState("");
+  const [specText, setSpecText] = useState(initialSpecText ?? "");
   const [quoting, setQuoting] = useState(false);
   const [quote, setQuote] = useState<QuoteResponse | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
@@ -205,6 +210,12 @@ export default function TaskSubmissionFlow() {
       </div>
 
       <form onSubmit={getQuote} className="space-y-3">
+        {initialSpecText && (
+          <p className="rounded-lg border border-cyan-500/30 bg-cyan-500/5 px-3 py-2 text-xs text-cyan-300">
+            Pre-filled from a rejected task&apos;s feedback — edit as needed. This is a new,
+            separately-priced task; nothing is resubmitted automatically.
+          </p>
+        )}
         <textarea
           value={specText}
           onChange={(e) => setSpecText(e.target.value)}

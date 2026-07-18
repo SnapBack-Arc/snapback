@@ -7,6 +7,7 @@ import {
   isFlaggedForScrutiny,
   recordDisputeFiling,
 } from "@/lib/disputes/service";
+import { generateRejectionFeedback } from "@/lib/disputes/feedback";
 
 /**
  * Runs the buyer-agent validator for a delivered task and acts on the outcome:
@@ -120,6 +121,28 @@ export async function runValidation(taskId: string, deliverable: unknown) {
         walletId: buyerWalletId,
         amountUsdc: fee.amount_usdc,
       });
+
+      // Buyer-facing feedback (Phase 3B) — generated now, not deferred to
+      // resolution, so a rejected buyer sees more than a frozen escrow right
+      // away: what the SLA/criteria gap actually was, and carry-forward
+      // context for a resubmission. Value-add, not settlement-critical — the
+      // dispute filing above already completed, so a feedback-generation
+      // failure here shouldn't fail validation itself.
+      try {
+        const feedback = await generateRejectionFeedback({
+          originalSpec: (task.metadata as { criteria?: unknown } | null)?.criteria ?? task.description,
+          sellerSla: listing?.sla ?? {},
+          deliverable,
+          failures: result.failures,
+          validatorRationale: result.rationale,
+        });
+        await supabase
+          .from("disputes")
+          .update({ educational_feedback: feedback as never })
+          .eq("id", disputeRow.id);
+      } catch {
+        // Leave educational_feedback null rather than fail the validation run.
+      }
     }
   }
 

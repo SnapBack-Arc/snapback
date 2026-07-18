@@ -7,7 +7,7 @@ import { getTaskById, type TaskDetail } from "@/lib/history";
 import { formatDate, formatUsdc, statusClasses } from "@/lib/format";
 import { explorerTxUrl } from "@/lib/arc";
 import type { DisputeRow, JudgeVoteRow } from "@/lib/supabase/types";
-import type { EducationalFeedback } from "@/lib/disputes/feedback";
+import type { EducationalFeedback, RejectionFeedback } from "@/lib/disputes/feedback";
 import AgentRoster, { AGENT_COLOR, type AgentEntry } from "@/components/AgentRoster";
 import DeliverButton from "@/components/DeliverButton";
 import TaskLiveUpdates from "@/components/TaskLiveUpdates";
@@ -210,9 +210,23 @@ function JudgeVotesList({ votes }: { votes: JudgeVoteRow[] }) {
   );
 }
 
-function DisputeCard({ dispute, judges }: { dispute: DisputeRow & { judge_votes: JudgeVoteRow[] }; judges: JudgeVoteRow[] }) {
+function DisputeCard({
+  dispute,
+  judges,
+  isBuyer,
+  resubmitHref,
+}: {
+  dispute: DisputeRow & { judge_votes: JudgeVoteRow[] };
+  judges: JudgeVoteRow[];
+  isBuyer: boolean;
+  resubmitHref?: string;
+}) {
   const isContest = dispute.dispute_kind === "post_approval_contest";
-  const feedback = dispute.educational_feedback as EducationalFeedback | null;
+  const feedback = dispute.educational_feedback as EducationalFeedback | RejectionFeedback | null;
+  const rejectionFeedback =
+    !isContest && feedback && "resubmission_context" in feedback ? feedback : null;
+  const contestFeedback =
+    isContest && feedback && "rewritten_specs" in feedback ? feedback : null;
 
   return (
     <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900 p-4">
@@ -261,19 +275,34 @@ function DisputeCard({ dispute, judges }: { dispute: DisputeRow & { judge_votes:
         {dispute.resolved_at && <span>Resolved {formatDate(dispute.resolved_at)}</span>}
       </div>
 
-      {isContest && dispute.outcome === "favor_payer" && feedback && (
+      {isContest && dispute.outcome === "favor_payer" && contestFeedback && (
         <div className="space-y-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
           <p className="text-xs font-medium text-emerald-400">Educational feedback</p>
-          <p className="text-sm text-zinc-300">{feedback.gap_summary}</p>
-          {feedback.rewritten_specs?.length > 0 && (
+          <p className="text-sm text-zinc-300">{contestFeedback.gap_summary}</p>
+          {contestFeedback.rewritten_specs?.length > 0 && (
             <div className="space-y-1">
               <p className="text-xs text-zinc-500">Rewritten spec suggestions:</p>
               <ul className="list-inside list-disc space-y-1 text-sm text-zinc-300">
-                {feedback.rewritten_specs.map((spec, i) => (
+                {contestFeedback.rewritten_specs.map((spec, i) => (
                   <li key={i}>{spec}</li>
                 ))}
               </ul>
             </div>
+          )}
+        </div>
+      )}
+
+      {rejectionFeedback && (
+        <div className="space-y-2 rounded-lg border border-cyan-500/30 bg-cyan-500/5 p-3">
+          <p className="text-xs font-medium text-cyan-400">Why this was rejected</p>
+          <p className="text-sm text-zinc-300">{rejectionFeedback.gap_summary}</p>
+          {isBuyer && resubmitHref && (
+            <Link
+              href={resubmitHref}
+              className="inline-block rounded-lg bg-cyan-500/15 px-3 py-1.5 text-xs font-medium text-cyan-400 transition hover:bg-cyan-500/25"
+            >
+              Resubmit as a new task →
+            </Link>
           )}
         </div>
       )}
@@ -466,9 +495,30 @@ export default async function TaskDetailPage({
               {sortedDisputes.length > 1 ? "Disputes" : "Dispute"}
             </h2>
             <div className="space-y-3">
-              {sortedDisputes.map((d) => (
-                <DisputeCard key={d.id} dispute={d} judges={d.judge_votes} />
-              ))}
+              {sortedDisputes.map((d) => {
+                const feedback = d.educational_feedback as
+                  | EducationalFeedback
+                  | RejectionFeedback
+                  | null;
+                const resubmissionContext =
+                  feedback && "resubmission_context" in feedback
+                    ? feedback.resubmission_context
+                    : null;
+                const resubmitHref = resubmissionContext
+                  ? `/?prefill=${encodeURIComponent(
+                      `${task.description ?? task.title}\n\n${resubmissionContext}`,
+                    )}`
+                  : undefined;
+                return (
+                  <DisputeCard
+                    key={d.id}
+                    dispute={d}
+                    judges={d.judge_votes}
+                    isBuyer={role === "Buyer"}
+                    resubmitHref={resubmitHref}
+                  />
+                );
+              })}
             </div>
           </section>
         )}
