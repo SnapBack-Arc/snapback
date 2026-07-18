@@ -123,8 +123,9 @@ export async function createAndFundTask(
 
   // 2. Credit the Estimator's quote-phase escrow + write the fee-inclusive
   //    figures onto the task. Seller still gets `amountUsdc` in full — the
-  //    happy-path skim is charged separately, to Treasury, in that call.
-  await creditSessionToTask(params.estimatorSessionId, task.id);
+  //    happy-path fee, validation fee, and dispute contingency are collected
+  //    for real from the buyer's own wallet in that call (Phase 4).
+  await creditSessionToTask(params.estimatorSessionId, task.id, buyerWallet.circle_wallet_id);
 
   // 3. Create the job directly on SnapBackEscrow.
   const expiredAt = Math.floor(Date.now() / 1000) + DEFAULT_JOB_EXPIRY_DAYS * 86_400;

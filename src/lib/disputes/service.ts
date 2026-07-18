@@ -1,9 +1,10 @@
 import "server-only";
+import type { Address } from "viem";
 import { createServiceSupabase } from "@/lib/supabase/server";
 import { ensureTreasuryWallet, ensureArbiterWallet } from "@/lib/app-wallets";
 import { generateEducationalFeedback } from "@/lib/disputes/feedback";
 import { ARC_CHAIN_ID } from "@/lib/arc";
-import { resolveJobDispute, waitForTxHash } from "@/lib/escrow";
+import { resolveJobDispute, transferUsdc, waitForTxHash } from "@/lib/escrow";
 import type { Database } from "@/lib/supabase/types";
 
 /**
@@ -241,6 +242,11 @@ export async function resolveDispute(
       .eq("id", dispute.filing_fee_payment_id);
   }
 
+  // Applies to both dispute kinds — the contingency is collected at
+  // task-funding time regardless of whether a dispute ever happens, so its
+  // settlement isn't tied to the on-chain job-resolution branch above.
+  await settleDisputeContingency(dispute.task_id, walletId, buyerWon);
+
   const stats = await getOrCreateStats(walletId);
   const consecutiveLosses = buyerWon ? 0 : stats.consecutive_losses + 1;
 
@@ -265,6 +271,119 @@ export async function resolveDispute(
   // above — the auto-approved payout simply stands.
   if (dispute.dispute_kind === "post_approval_contest" && buyerWon) {
     await settleContestWin(disputeId, dispute.task_id, walletId);
+  }
+}
+
+/**
+ * Settles the ~2% dispute-contingency holdback (Phase 4) collected for real
+ * at task-funding time (lib/estimator/service.ts's creditSessionToTask).
+ *
+ * Buyer wins -> a real refund transfer, Treasury's wallet -> the buyer's
+ * wallet. This is a genuinely new on-chain transfer, not just a ledger flip
+ * — the money is sitting in Treasury's real wallet from funding time.
+ *
+ * Buyer loses -> no transfer needed at all. The money is already in
+ * Treasury's wallet from funding time; "losing" just means it's confirmed
+ * as kept revenue instead of a refundable holdback.
+ *
+ * No-op if this task never had a contingency payment (e.g. all task-level
+ * fee rates configured to 0) or it's already been settled — safe to call
+ * from both resolveDispute() and sweepUncontestedContingencies() below
+ * without double-settling.
+ */
+async function settleDisputeContingency(
+  taskId: string,
+  buyerWalletId: string,
+  buyerWon: boolean,
+): Promise<void> {
+  const supabase = createServiceSupabase();
+  const { data: payment } = await supabase
+    .from("payments")
+    .select("*")
+    .eq("task_id", taskId)
+    .eq("kind", "dispute_contingency")
+    .eq("status", "escrowed")
+    .maybeSingle();
+  if (!payment) return;
+
+  if (!buyerWon) {
+    await supabase
+      .from("payments")
+      .update({
+        status: "released",
+        metadata: {
+          ...((payment.metadata as Record<string, unknown>) ?? {}),
+          settled_reason: "dispute_lost_forfeited",
+        },
+      })
+      .eq("id", payment.id);
+    return;
+  }
+
+  const { data: buyerWallet } = await supabase
+    .from("wallets")
+    .select("address")
+    .eq("id", buyerWalletId)
+    .single();
+  if (!buyerWallet) return;
+
+  const treasury = await ensureTreasuryWallet();
+  const refundTxId = await transferUsdc(
+    treasury.circle_wallet_id,
+    buyerWallet.address as Address,
+    String(payment.amount_usdc),
+  );
+  if (!refundTxId) return;
+  const refundTxHash = await waitForTxHash(refundTxId);
+
+  await supabase
+    .from("payments")
+    .update({
+      status: "refunded",
+      tx_hash: refundTxHash,
+      metadata: {
+        ...((payment.metadata as Record<string, unknown>) ?? {}),
+        collected_tx_hash: payment.tx_hash,
+        settled_reason: "dispute_won_refunded",
+      },
+    })
+    .eq("id", payment.id);
+}
+
+function contestWindowHoursForSweep(): number {
+  // Re-declared rather than imported from lib/disputes/contest.ts, which
+  // itself imports from this file — importing the other way would create a
+  // cycle. Same env var, same default.
+  return Number(process.env.POST_APPROVAL_CONTEST_WINDOW_HOURS ?? "24");
+}
+
+/**
+ * Refunds the dispute-contingency holdback for any of this buyer's tasks
+ * that completed cleanly — auto-approved, no contest ever filed, and the
+ * post-approval contest window has safely elapsed. There's no cron/keeper
+ * anywhere in this app (same constraint documented throughout this
+ * project), so this uses the same "check on the next natural touchpoint"
+ * pattern already established for abandoned Estimator sessions — called
+ * from submitQuoteRequest so it fires the next time this buyer does
+ * anything, rather than never firing at all.
+ */
+export async function sweepUncontestedContingencies(buyerWalletId: string): Promise<void> {
+  const supabase = createServiceSupabase();
+  const cutoff = new Date(Date.now() - contestWindowHoursForSweep() * 3_600_000).toISOString();
+
+  const { data: tasks } = await supabase
+    .from("tasks")
+    .select("id")
+    .eq("payer_wallet_id", buyerWalletId)
+    .eq("status", "accepted")
+    .not("accepted_at", "is", null)
+    .lt("accepted_at", cutoff);
+
+  for (const task of tasks ?? []) {
+    // settleDisputeContingency is itself a no-op if there's no
+    // still-escrowed contingency row (e.g. a contest was filed and this
+    // task already settled through resolveDispute instead).
+    await settleDisputeContingency(task.id, buyerWalletId, true);
   }
 }
 

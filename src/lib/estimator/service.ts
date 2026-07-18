@@ -1,4 +1,5 @@
 import "server-only";
+import type { Address } from "viem";
 import { createServiceSupabase } from "@/lib/supabase/server";
 import { ensureTreasuryWallet } from "@/lib/app-wallets";
 import { isWalletFlagged } from "@/lib/wallet-flags";
@@ -10,6 +11,8 @@ import {
 } from "@/lib/estimator/gate";
 import { estimateSellerCost } from "@/lib/estimator/marketplace";
 import { computeGuaranteedQuote, type GuaranteedQuote } from "@/lib/estimator/fees";
+import { transferUsdc, waitForTxHash } from "@/lib/escrow";
+import { sweepUncontestedContingencies } from "@/lib/disputes/service";
 import { ARC_CHAIN_ID } from "@/lib/arc";
 import type { Database } from "@/lib/supabase/types";
 
@@ -111,6 +114,12 @@ export async function submitQuoteRequest(
   if (await isWalletFlagged(payerWalletId)) {
     throw new Error("This account is paused by an administrator and can't request new quotes.");
   }
+
+  // Same check-on-next-request pattern as the abandonment sweep just below —
+  // no cron exists to refund a clean-completion dispute-contingency holdback
+  // once its contest window elapses, so the next time this buyer does
+  // anything is where that happens instead of never happening.
+  await sweepUncontestedContingencies(payerWalletId);
 
   const supabase = createServiceSupabase();
   const spec = await parseSpec(rawText);
@@ -246,16 +255,30 @@ export type CreditResult = {
   platform_fee_usdc: number;
   /** Fixed fee recovering the validator's real LLM-call cost, routed to Treasury. */
   validation_fee_usdc: number;
+  /** Held at Treasury pending dispute outcome — see settleDisputeContingency. */
+  dispute_contingency_usdc: number;
 };
 
 /**
  * A matching final submission credits held quote-phase escrow toward the task
  * payment rather than sweeping it, and settles the task against the
  * fee-inclusive guaranteed_total_usdc (not the seller's raw quoted amount).
+ *
+ * PRIORITY FIX (Phase 4): the happy-path fee, validation fee, and dispute
+ * contingency used to only ever become `payments` rows marked
+ * released/escrowed with no matching on-chain transfer — Treasury's real
+ * balance stayed 0 no matter how much "revenue" the dashboard attributed to
+ * it. All three are now collected for real in a single ERC-20 transfer
+ * (buyer -> Treasury), alongside the existing on-chain escrow lock. The
+ * happy-path and validation fees are unconditional, so they're marked
+ * `released` immediately. The contingency is refundable (clean completion or
+ * a buyer-won dispute), so it's marked `escrowed` — settled for real later by
+ * disputes/service.ts's settleDisputeContingency / sweepUncontestedContingencies.
  */
 export async function creditSessionToTask(
   sessionId: string,
   taskId: string,
+  buyerCircleWalletId: string,
 ): Promise<CreditResult> {
   const supabase = createServiceSupabase();
   const { data: session } = await supabase
@@ -282,44 +305,77 @@ export async function creditSessionToTask(
   const platformFee = Number(session.happy_path_fee_usdc ?? 0);
   const validationFee = Number(session.validation_fee_usdc ?? 0);
   const contingentPct = session.disclosed_contingent_fee_pct;
+  const jobCost = Number(session.seller_cost_estimate_usdc ?? 0);
+  const contingencyUsdc = Number(((Number(contingentPct) || 0) * jobCost).toFixed(6));
 
-  // Buyer-side skim, added on top and routed to Treasury — never deducted
-  // from the seller's payout, so seller payouts stay predictable.
-  if (platformFee > 0) {
-    const treasury = await ensureTreasuryWallet();
-    await supabase.from("payments").insert({
-      task_id: taskId,
-      from_wallet_id: session.payer_wallet_id,
-      kind: "platform_fee",
-      status: "released",
-      amount_usdc: platformFee,
-      chain_id: ARC_CHAIN_ID,
-      metadata: {
-        estimator_session_id: sessionId,
-        treasury_address: treasury.address,
-        reason: "happy_path_skim",
-      },
-    });
-  }
+  const totalRealFee = Number((platformFee + validationFee + contingencyUsdc).toFixed(6));
 
-  // Fixed fee recovering the validator's real LLM-call cost (lib/validator.ts)
-  // — charged on every task regardless of approve/reject, unlike the
-  // contingent arbitration fee, since the validator call itself always runs.
-  if (validationFee > 0) {
+  if (totalRealFee > 0) {
     const treasury = await ensureTreasuryWallet();
-    await supabase.from("payments").insert({
-      task_id: taskId,
-      from_wallet_id: session.payer_wallet_id,
-      kind: "validation_fee",
-      status: "released",
-      amount_usdc: validationFee,
-      chain_id: ARC_CHAIN_ID,
-      metadata: {
-        estimator_session_id: sessionId,
-        treasury_address: treasury.address,
-        reason: "validator_cost_recovery",
-      },
-    });
+    const txId = await transferUsdc(buyerCircleWalletId, treasury.address as Address, String(totalRealFee));
+    if (!txId) {
+      throw new Error("Fee collection transfer did not return a transaction id");
+    }
+    const txHash = await waitForTxHash(txId);
+
+    // Buyer-side skim, added on top and routed to Treasury — never deducted
+    // from the seller's payout, so seller payouts stay predictable.
+    if (platformFee > 0) {
+      await supabase.from("payments").insert({
+        task_id: taskId,
+        from_wallet_id: session.payer_wallet_id,
+        kind: "platform_fee",
+        status: "released",
+        amount_usdc: platformFee,
+        tx_hash: txHash,
+        chain_id: ARC_CHAIN_ID,
+        metadata: {
+          estimator_session_id: sessionId,
+          treasury_address: treasury.address,
+          reason: "happy_path_skim",
+        },
+      });
+    }
+
+    // Fixed fee recovering the validator's real LLM-call cost (lib/validator.ts)
+    // — charged on every task regardless of approve/reject, unlike the
+    // contingent arbitration fee, since the validator call itself always runs.
+    if (validationFee > 0) {
+      await supabase.from("payments").insert({
+        task_id: taskId,
+        from_wallet_id: session.payer_wallet_id,
+        kind: "validation_fee",
+        status: "released",
+        amount_usdc: validationFee,
+        tx_hash: txHash,
+        chain_id: ARC_CHAIN_ID,
+        metadata: {
+          estimator_session_id: sessionId,
+          treasury_address: treasury.address,
+          reason: "validator_cost_recovery",
+        },
+      });
+    }
+
+    // Held, not kept — refunded on clean completion or a buyer-won dispute,
+    // kept as real Treasury revenue only on a buyer-lost dispute.
+    if (contingencyUsdc > 0) {
+      await supabase.from("payments").insert({
+        task_id: taskId,
+        from_wallet_id: session.payer_wallet_id,
+        kind: "dispute_contingency",
+        status: "escrowed",
+        amount_usdc: contingencyUsdc,
+        tx_hash: txHash,
+        chain_id: ARC_CHAIN_ID,
+        metadata: {
+          estimator_session_id: sessionId,
+          treasury_address: treasury.address,
+          reason: "dispute_contingency_holdback",
+          contingent_fee_pct: contingentPct,
+        },
+      });
+    }
   }
 
   await supabase
@@ -342,6 +398,7 @@ export async function creditSessionToTask(
     remaining_due_usdc: Math.max(0, guaranteedTotal - quoteFeeCredit),
     platform_fee_usdc: platformFee,
     validation_fee_usdc: validationFee,
+    dispute_contingency_usdc: contingencyUsdc,
   };
 }
 

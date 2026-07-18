@@ -39,6 +39,7 @@ const SIG = {
   fund: "fund(uint256)",
   submit: "submit(uint256,bytes32)",
   resolveDispute: "resolveDispute(uint256,bool,bytes32)",
+  transfer: "transfer(address,uint256)",
 } as const;
 
 /**
@@ -309,6 +310,30 @@ export async function resolveJobDispute(
     contractAddress: SNAPBACK_ESCROW,
     abiFunctionSignature: SIG.resolveDispute,
     abiParameters: [jobId, favorBuyer, reason],
+    fee: FEE,
+  });
+  return res.data?.id;
+}
+
+/**
+ * Priority fix (Phase 4): a plain ERC-20 transfer, direct wallet-to-wallet,
+ * with no escrow contract in the loop at all. Used to actually collect the
+ * happy-path/validation fees and the dispute contingency at task-funding
+ * time (buyer -> Treasury), and to actually refund the contingency later
+ * (Treasury -> buyer) — both real on-chain transfers where previously these
+ * amounts only ever existed as `payments` rows with no matching transfer.
+ */
+export async function transferUsdc(
+  fromCircleWalletId: string,
+  toAddress: Address,
+  amountUsdc: string,
+): Promise<string | undefined> {
+  const client = getDeveloperControlledWalletsClient();
+  const res = await client.createContractExecutionTransaction({
+    walletId: fromCircleWalletId,
+    contractAddress: ARC_USDC_ADDRESS,
+    abiFunctionSignature: SIG.transfer,
+    abiParameters: [toAddress, parseUnits(amountUsdc, USDC_DECIMALS).toString()],
     fee: FEE,
   });
   return res.data?.id;

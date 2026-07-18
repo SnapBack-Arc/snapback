@@ -1081,6 +1081,7 @@ export type Database = {
         | "insurance_payout"
         | "submission"
         | "validation_fee"
+        | "dispute_contingency"
       payment_status:
         | "pending"
         | "escrowed"
@@ -1268,6 +1269,7 @@ export const Constants = {
         "insurance_payout",
         "submission",
         "validation_fee",
+        "dispute_contingency",
       ],
       payment_status: [
         "pending",
