@@ -105,13 +105,22 @@ export async function filePostApprovalContest(
 
   await supabase.from("tasks").update({ status: "disputed" }).eq("id", taskId);
 
+  const { data: buyerWallet } = await supabase
+    .from("wallets")
+    .select("circle_wallet_id")
+    .eq("id", buyerWalletId)
+    .single();
+  if (!buyerWallet) throw new Error("Buyer has no wallet on file — cannot collect the contest filing fee");
+
   // Upfront charge higher than a normal dispute filing fee — inherits the
-  // buyer's abuse-escalation multiplier on top, then scales up further.
-  const baseFee = await computeFilingFee(buyerWalletId);
+  // buyer's cost-basis/abuse-escalation multiplier on top, then scales up further.
+  const costBasis = Number(task.amount_usdc ?? 0) + Number(task.validation_fee_usdc ?? 0);
+  const baseFee = await computeFilingFee(buyerWalletId, costBasis);
   const feeUsdc = Number((baseFee.amount_usdc * contestFeeMultiplier()).toFixed(6));
   await recordDisputeFiling({
     disputeId: disputeRow.id,
     walletId: buyerWalletId,
+    buyerCircleWalletId: buyerWallet.circle_wallet_id,
     amountUsdc: feeUsdc,
   });
 

@@ -224,12 +224,20 @@ export async function runValidation(taskId: string, deliverable: unknown) {
       .single();
 
     // Escalating filing fee — forfeited on a loss, refunded on a win (see
-    // lib/disputes/service.ts:resolveDispute).
+    // lib/disputes/service.ts:resolveDispute). buyerCircleWalletId is
+    // required here: without a real Circle-managed wallet on file, there's
+    // no way to actually collect the fee, so the auto-file itself fails
+    // rather than silently skip a fee that other buyers do pay.
     if (disputeRow) {
-      const fee = await computeFilingFee(buyerWalletId);
+      if (!buyerCircleWalletId) {
+        throw new Error("Buyer has no Circle-managed wallet — cannot collect the dispute filing fee");
+      }
+      const costBasis = Number(task.amount_usdc ?? 0) + Number(task.validation_fee_usdc ?? 0);
+      const fee = await computeFilingFee(buyerWalletId, costBasis);
       await recordDisputeFiling({
         disputeId: disputeRow.id,
         walletId: buyerWalletId,
+        buyerCircleWalletId,
         amountUsdc: fee.amount_usdc,
       });
 

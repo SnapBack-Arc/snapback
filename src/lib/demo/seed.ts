@@ -2,8 +2,8 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { createServiceSupabase } from "@/lib/supabase/server";
 import { getUserWallet, createArcWalletForUser } from "@/lib/circle-wallets";
-import { computeFilingFee, recordDisputeFiling, resolveDispute } from "@/lib/disputes/service";
-import { filePostApprovalContest } from "@/lib/disputes/contest";
+import { computeFilingFee } from "@/lib/disputes/service";
+import { contestFeeMultiplier } from "@/lib/disputes/contest";
 import { CIRCLE_ARC_BLOCKCHAIN, ARC_CHAIN_ID } from "@/lib/arc";
 import { DEMO_TEST_ACCOUNT_EMAIL, DEMO_TEST_WALLET_REF_ID } from "@/lib/demo/config";
 import type { Database } from "@/lib/supabase/types";
@@ -167,6 +167,123 @@ async function insertPayment(params: {
   if (error) throw new Error(`Seed payment failed (${params.label}): ${error.message}`);
 }
 
+/**
+ * Fabricated equivalent of lib/disputes/service.ts's recordDisputeFiling —
+ * same ledger effects (payments row, disputes.filing_fee_usdc/payment_id,
+ * buyer_dispute_stats.disputes_filed bump), but a deterministic fake tx_hash
+ * instead of a real Circle transfer. recordDisputeFiling now moves real
+ * USDC buyer -> Treasury at filing time, which must never happen for these
+ * fabricated historical rows — this is the seed-only bypass of that path.
+ */
+async function fabricateFilingFee(params: {
+  disputeId: string;
+  buyerWalletId: string;
+  amountUsdc: number;
+  label: string;
+}): Promise<void> {
+  const supabase = createServiceSupabase();
+  const { data: payment, error } = await supabase
+    .from("payments")
+    .insert({
+      from_wallet_id: params.buyerWalletId,
+      kind: "filing_fee",
+      status: "escrowed",
+      amount_usdc: params.amountUsdc,
+      tx_hash: fakeTxHash(params.label),
+      chain_id: ARC_CHAIN_ID,
+      metadata: { dispute_id: params.disputeId, demo: true },
+    })
+    .select("id")
+    .single();
+  if (error) throw new Error(`Seed filing fee payment failed (${params.label}): ${error.message}`);
+
+  await supabase
+    .from("disputes")
+    .update({
+      filing_fee_usdc: params.amountUsdc,
+      filing_fee_payment_id: payment?.id ?? null,
+    })
+    .eq("id", params.disputeId);
+
+  await bumpDisputesFiled(params.buyerWalletId);
+}
+
+async function bumpDisputesFiled(walletId: string): Promise<void> {
+  const supabase = createServiceSupabase();
+  const { data: existing } = await supabase
+    .from("buyer_dispute_stats")
+    .select("disputes_filed")
+    .eq("wallet_id", walletId)
+    .maybeSingle();
+  if (existing) {
+    await supabase
+      .from("buyer_dispute_stats")
+      .update({ disputes_filed: existing.disputes_filed + 1 })
+      .eq("wallet_id", walletId);
+  } else {
+    await supabase.from("buyer_dispute_stats").insert({ wallet_id: walletId, disputes_filed: 1 });
+  }
+}
+
+/**
+ * Fabricated equivalent of lib/disputes/service.ts's resolveDispute — same
+ * status/outcome/win-loss-stat ledger effects, but the filing-fee holdback
+ * is settled with a plain status flip (never a real refund transfer) and no
+ * on-chain call is made. Deliberately doesn't touch settleDisputeContingency
+ * (none of the seeded tasks below ever carry a dispute_contingency payment
+ * row to begin with) or settleContestWin's LLM feedback call (kept fully
+ * offline/deterministic, same as the rest of this file).
+ */
+async function fabricateDisputeResolution(params: {
+  disputeId: string;
+  buyerWalletId: string;
+  outcome: "favor_payer" | "favor_payee";
+}): Promise<void> {
+  const supabase = createServiceSupabase();
+  const buyerWon = params.outcome === "favor_payer";
+
+  const { data: dispute } = await supabase
+    .from("disputes")
+    .select("filing_fee_payment_id")
+    .eq("id", params.disputeId)
+    .single();
+
+  await supabase
+    .from("disputes")
+    .update({ status: "resolved", outcome: params.outcome, resolved_at: new Date().toISOString() })
+    .eq("id", params.disputeId);
+
+  if (dispute?.filing_fee_payment_id) {
+    await supabase
+      .from("payments")
+      .update({
+        status: buyerWon ? "refunded" : "released",
+        metadata: {
+          dispute_id: params.disputeId,
+          demo: true,
+          settled_reason: buyerWon ? "dispute_won_refunded" : "dispute_lost_forfeited",
+        },
+      })
+      .eq("id", dispute.filing_fee_payment_id);
+  }
+
+  const { data: stats } = await supabase
+    .from("buyer_dispute_stats")
+    .select("*")
+    .eq("wallet_id", params.buyerWalletId)
+    .maybeSingle();
+  if (stats) {
+    await supabase
+      .from("buyer_dispute_stats")
+      .update({
+        disputes_won: stats.disputes_won + (buyerWon ? 1 : 0),
+        disputes_lost: stats.disputes_lost + (buyerWon ? 0 : 1),
+        consecutive_losses: buyerWon ? 0 : stats.consecutive_losses + 1,
+      })
+      .eq("wallet_id", params.buyerWalletId);
+  }
+}
+
 async function payJudges(
   taskId: string,
   disputeId: string,
@@ -321,8 +438,13 @@ async function seedStandardDisputeTask(params: {
     .single();
   if (disputeError || !dispute) throw new Error(`Seed dispute failed: ${disputeError?.message}`);
 
-  const fee = await computeFilingFee(buyer.id);
-  await recordDisputeFiling({ disputeId: dispute.id, walletId: buyer.id, amountUsdc: fee.amount_usdc });
+  const fee = await computeFilingFee(buyer.id, amount);
+  await fabricateFilingFee({
+    disputeId: dispute.id,
+    buyerWalletId: buyer.id,
+    amountUsdc: fee.amount_usdc,
+    label: `${dispute.id}:filing_fee`,
+  });
 
   for (const { judge, choice } of params.votes) {
     await insertRow(
@@ -342,7 +464,7 @@ async function seedStandardDisputeTask(params: {
     );
   }
 
-  await resolveDispute(dispute.id, outcome);
+  await fabricateDisputeResolution({ disputeId: dispute.id, buyerWalletId: buyer.id, outcome });
 
   await insertPayment({
     taskId: task.id,
@@ -487,11 +609,45 @@ async function seedPostApprovalContest(buyer: WalletRow, seller: WalletRow, judg
     label: `${task.id}:release`,
   });
 
-  const { dispute_id: disputeId } = await filePostApprovalContest(
-    task.id,
-    buyer.id,
-    "Auto-approve matched keyword thresholds, but 2 of the 5 emails used the wrong tone entirely — read as generic instead of the disclosed casual/technical mix.",
-  );
+  // Fabricated equivalent of lib/disputes/contest.ts's filePostApprovalContest
+  // — same dispute-row shape (dispute_kind: post_approval_contest,
+  // validator_reasoning_snapshot taken from the "approved" validation just
+  // inserted above), but the filing fee below is collected via
+  // fabricateFilingFee, never the real recordDisputeFiling.
+  const contestReason =
+    "Auto-approve matched keyword thresholds, but 2 of the 5 emails used the wrong tone entirely — read as generic instead of the disclosed casual/technical mix.";
+  const { data: disputeRow, error: disputeError } = await supabase
+    .from("disputes")
+    .insert({
+      task_id: task.id,
+      opened_by_wallet: buyer.id,
+      status: "open",
+      dispute_kind: "post_approval_contest",
+      reason: contestReason,
+      evidence: { demo: true, contest_reason: contestReason } as never,
+      validator_reasoning_snapshot: {
+        rationale: "Auto-approved: all 5 emails present, tone-guide keywords matched threshold.",
+        policy_pass: true,
+        task_pass: true,
+        sla_pass: true,
+        failures: null,
+      } as never,
+    })
+    .select("id")
+    .single();
+  if (disputeError || !disputeRow) throw new Error(`Seed contest dispute failed: ${disputeError?.message}`);
+  const disputeId = disputeRow.id;
+
+  await supabase.from("tasks").update({ status: "disputed" }).eq("id", task.id);
+
+  const contestBaseFee = await computeFilingFee(buyer.id, amount);
+  const contestFeeUsdc = Number((contestBaseFee.amount_usdc * contestFeeMultiplier()).toFixed(6));
+  await fabricateFilingFee({
+    disputeId,
+    buyerWalletId: buyer.id,
+    amountUsdc: contestFeeUsdc,
+    label: `${disputeId}:filing_fee`,
+  });
 
   const votes: { judge: WalletRow; choice: Database["public"]["Enums"]["vote_choice"] }[] = [
     { judge: judges[0], choice: "favor_payer" },
@@ -514,9 +670,38 @@ async function seedPostApprovalContest(buyer: WalletRow, seller: WalletRow, judg
     );
   }
 
-  // Buyer wins: settles from the Treasury's insurance pool (resolveDispute
-  // handles this via settleContestWin — never a seller clawback).
-  await resolveDispute(disputeId, "favor_payer");
+  // Buyer wins: the real resolveDispute settles this from the Treasury's
+  // insurance pool via settleContestWin (never a seller clawback) — that's
+  // ledger-only already (no real transfer), so it's safe to replicate
+  // directly here rather than call the production function, which would
+  // otherwise also re-settle the fabricated filing fee above through a real
+  // refund transfer.
+  await fabricateDisputeResolution({ disputeId, buyerWalletId: buyer.id, outcome: "favor_payer" });
+
+  const { data: insurancePayment, error: insurancePaymentError } = await supabase
+    .from("payments")
+    .insert({
+      task_id: task.id,
+      to_wallet_id: buyer.id,
+      kind: "insurance_payout",
+      status: "released",
+      amount_usdc: amount,
+      tx_hash: fakeTxHash(`${disputeId}:insurance_payout`),
+      chain_id: ARC_CHAIN_ID,
+      metadata: { dispute_id: disputeId, demo: true, reason: "post_approval_contest_won" },
+    })
+    .select("id")
+    .single();
+  if (insurancePaymentError) {
+    throw new Error(`Seed insurance payout failed: ${insurancePaymentError.message}`);
+  }
+  await supabase
+    .from("disputes")
+    .update({
+      insurance_payout_usdc: amount,
+      insurance_payout_payment_id: insurancePayment?.id ?? null,
+    })
+    .eq("id", disputeId);
 
   await payJudges(task.id, disputeId, votes.map((v) => v.judge), 0.75);
 }

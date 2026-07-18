@@ -10,12 +10,14 @@ import type { Database } from "@/lib/supabase/types";
 /**
  * Buyer dispute-abuse tracking.
  *
- * Every resolved dispute (standard, or later a post-approval contest) settles
- * a filing fee — forfeited to Treasury on a loss, refunded on a win — and
- * updates the buyer's rolling win/loss record. A buyer whose loss rate over
- * their last N resolved disputes crosses a threshold pays a scaled-up filing
- * fee on their next filing; crossing a harder threshold flags them for
- * tighter validator scrutiny on future tasks.
+ * Every resolved dispute (standard, or a post-approval contest) settles a
+ * filing fee — forfeited to Treasury on a loss, refunded on a win — and
+ * updates the buyer's rolling win/loss record. The filing fee itself scales
+ * with what's at stake (the task's cost basis) and with how many disputes
+ * this buyer has ever filed, win or lose (see computeFilingFee). Separately,
+ * a buyer whose loss rate over their last N resolved disputes crosses a
+ * harder threshold gets flagged for tighter validator scrutiny on future
+ * tasks — that flag is unrelated to the fee amount.
  */
 
 type StatsRow = Database["public"]["Tables"]["buyer_dispute_stats"]["Row"];
@@ -24,22 +26,19 @@ export function disputeLookbackN(): number {
   return Number(process.env.DISPUTE_ABUSE_LOOKBACK_N ?? "5");
 }
 
-/** Loss rate over the lookback window at/above this scales up the *next* filing fee. */
-export function feeEscalationLossRateThreshold(): number {
-  return Number(process.env.DISPUTE_FEE_ESCALATION_LOSS_RATE ?? "0.6");
-}
-
 /** A harder threshold — crossing this flags the buyer for tighter validator scrutiny. */
 export function hardAbuseLossRateThreshold(): number {
   return Number(process.env.DISPUTE_HARD_ABUSE_LOSS_RATE ?? "0.8");
 }
 
+/** Floor filing fee — the cost-basis-scaled fee below never drops below this. */
 export function baseFilingFeeUsdc(): number {
-  return Number(process.env.DISPUTE_FILING_FEE_USDC ?? "2");
+  return Number(process.env.DISPUTE_FILING_FEE_USDC ?? "0.05");
 }
 
-export function escalatedFeeMultiplier(): number {
-  return Number(process.env.DISPUTE_ESCALATED_FEE_MULTIPLIER ?? "2.5");
+/** Linear per-filing escalation step, applied once per lifetime filed dispute. */
+export function filingFeeEscalationStepPct(): number {
+  return Number(process.env.DISPUTE_FEE_ESCALATION_STEP_PCT ?? "0.075");
 }
 
 async function getOrCreateStats(walletId: string): Promise<StatsRow> {
@@ -86,24 +85,35 @@ async function recentLossRate(
 
 export type FilingFeeQuote = {
   amount_usdc: number;
-  escalated: boolean;
-  loss_rate: number;
-  sample_size: number;
+  task_cost_basis_usdc: number;
+  disputes_filed_prior: number;
+  escalation_multiplier: number;
+  floor_applied: boolean;
 };
 
-/** Escalating filing fee: flat base fee, scaled up once the buyer's recent loss rate crosses the threshold. */
-export async function computeFilingFee(walletId: string): Promise<FilingFeeQuote> {
-  const n = disputeLookbackN();
-  const { loss_rate, sample_size } = await recentLossRate(walletId, n);
-  const escalated = sample_size >= n && loss_rate >= feeEscalationLossRateThreshold();
-  const base = baseFilingFeeUsdc();
+/**
+ * Filing fee scaled to what this dispute actually puts at stake: the task's
+ * real cost basis (amount + validation fee), times a linear multiplier that
+ * grows with every dispute this buyer has ever filed (win or lose — filing
+ * itself is the thing being priced, not losing), floored at a small flat
+ * minimum so a $0 first-time filing isn't free.
+ */
+export async function computeFilingFee(
+  walletId: string,
+  taskCostBasisUsdc: number,
+): Promise<FilingFeeQuote> {
+  const stats = await getOrCreateStats(walletId);
+  const disputesFiledPrior = stats.disputes_filed;
+  const multiplier = 1 + disputesFiledPrior * filingFeeEscalationStepPct();
+  const scaled = taskCostBasisUsdc * multiplier;
+  const floor = baseFilingFeeUsdc();
+  const flooredApplies = scaled < floor;
   return {
-    amount_usdc: escalated
-      ? Number((base * escalatedFeeMultiplier()).toFixed(6))
-      : base,
-    escalated,
-    loss_rate,
-    sample_size,
+    amount_usdc: Number((flooredApplies ? floor : scaled).toFixed(6)),
+    task_cost_basis_usdc: taskCostBasisUsdc,
+    disputes_filed_prior: disputesFiledPrior,
+    escalation_multiplier: multiplier,
+    floor_applied: flooredApplies,
   };
 }
 
@@ -120,14 +130,32 @@ export async function isFlaggedForScrutiny(walletId: string): Promise<boolean> {
 /**
  * Records the filing fee for a newly-opened dispute and bumps the buyer's
  * filed counter. Call this at the same time the `disputes` row is inserted.
+ *
+ * This is a real Circle transfer, buyer -> Treasury, collected upfront at
+ * filing time — not just a ledger row. The transfer must confirm before any
+ * row is written: a fee that failed to actually collect shouldn't look like
+ * it was collected. If it fails, this throws and the caller's dispute filing
+ * fails with it, same as any other funding step in this app.
  */
 export async function recordDisputeFiling(params: {
   disputeId: string;
   walletId: string;
+  buyerCircleWalletId: string;
   amountUsdc: number;
 }): Promise<void> {
   const supabase = createServiceSupabase();
   const stats = await getOrCreateStats(params.walletId);
+
+  const treasury = await ensureTreasuryWallet();
+  const collectTxId = await transferUsdc(
+    params.buyerCircleWalletId,
+    treasury.address as Address,
+    String(params.amountUsdc),
+  );
+  if (!collectTxId) {
+    throw new Error("Filing fee collection transfer did not return a transaction id");
+  }
+  const collectTxHash = await waitForTxHash(collectTxId);
 
   const { data: payment } = await supabase
     .from("payments")
@@ -136,6 +164,7 @@ export async function recordDisputeFiling(params: {
       kind: "filing_fee",
       status: "escrowed",
       amount_usdc: params.amountUsdc,
+      tx_hash: collectTxHash,
       chain_id: ARC_CHAIN_ID,
       metadata: { dispute_id: params.disputeId },
     })
@@ -192,6 +221,7 @@ export async function resolveDispute(
   if (dispute.status === "resolved") throw new Error("Dispute already resolved");
 
   const buyerWon = outcome === "favor_payer";
+  const walletId = dispute.opened_by_wallet;
 
   if (dispute.dispute_kind !== "post_approval_contest") {
     const { data: task } = await supabase
@@ -218,6 +248,26 @@ export async function resolveDispute(
     await waitForTxHash(txId);
   }
 
+  // Both holdbacks below must fully settle — including a real refund
+  // transfer on a win — BEFORE the dispute is marked "resolved". Same
+  // reasoning as the on-chain call above: if a refund fails or reverts, the
+  // dispute must stay in a recoverable, unresolved state rather than record
+  // an outcome the money never actually caught up with.
+  if (dispute.filing_fee_payment_id) {
+    await refundOrReleaseHeldPayment({
+      paymentId: dispute.filing_fee_payment_id,
+      buyerWalletId: walletId,
+      buyerWon,
+      wonReason: "dispute_won_refunded",
+      lostReason: "dispute_lost_forfeited",
+    });
+  }
+
+  // Applies to both dispute kinds — the contingency is collected at
+  // task-funding time regardless of whether a dispute ever happens, so its
+  // settlement isn't tied to the on-chain job-resolution branch above.
+  await settleDisputeContingency(dispute.task_id, walletId, buyerWon);
+
   await supabase
     .from("disputes")
     .update({
@@ -226,26 +276,6 @@ export async function resolveDispute(
       resolved_at: new Date().toISOString(),
     })
     .eq("id", disputeId);
-
-  const walletId = dispute.opened_by_wallet;
-
-  if (dispute.filing_fee_payment_id) {
-    await supabase
-      .from("payments")
-      .update({
-        status: buyerWon ? "refunded" : "released",
-        metadata: {
-          dispute_id: disputeId,
-          settled_reason: buyerWon ? "dispute_won_refunded" : "dispute_lost_forfeited",
-        },
-      })
-      .eq("id", dispute.filing_fee_payment_id);
-  }
-
-  // Applies to both dispute kinds — the contingency is collected at
-  // task-funding time regardless of whether a dispute ever happens, so its
-  // settlement isn't tied to the on-chain job-resolution branch above.
-  await settleDisputeContingency(dispute.task_id, walletId, buyerWon);
 
   const stats = await getOrCreateStats(walletId);
   const consecutiveLosses = buyerWon ? 0 : stats.consecutive_losses + 1;
@@ -275,16 +305,95 @@ export async function resolveDispute(
 }
 
 /**
- * Settles the ~2% dispute-contingency holdback (Phase 4) collected for real
- * at task-funding time (lib/estimator/service.ts's creditSessionToTask).
+ * Settles a held (`status: "escrowed"`) payment that was collected upfront
+ * and may need to go back to the buyer depending on the outcome — the
+ * filing fee and the dispute-contingency holdback both follow this exact
+ * lifecycle, so this is the one place that implements it.
  *
  * Buyer wins -> a real refund transfer, Treasury's wallet -> the buyer's
- * wallet. This is a genuinely new on-chain transfer, not just a ledger flip
- * — the money is sitting in Treasury's real wallet from funding time.
+ * wallet. This is a genuinely new transfer, not just a ledger flip — the
+ * money is sitting in Treasury's real wallet from collection time.
  *
  * Buyer loses -> no transfer needed at all. The money is already in
- * Treasury's wallet from funding time; "losing" just means it's confirmed
- * as kept revenue instead of a refundable holdback.
+ * Treasury's wallet from collection time; "losing" just means it's
+ * confirmed as kept revenue instead of a refundable holdback.
+ *
+ * Throws (does not silently no-op) if the buyer's wallet can't be found, or
+ * the refund transfer fails to submit or fails to confirm — callers must not
+ * treat the settlement as done, or mark anything "resolved", if this throws.
+ * Safe to call twice: a payment that's already left "escrowed" is a no-op.
+ */
+async function refundOrReleaseHeldPayment(params: {
+  paymentId: string;
+  buyerWalletId: string;
+  buyerWon: boolean;
+  wonReason: string;
+  lostReason: string;
+}): Promise<void> {
+  const supabase = createServiceSupabase();
+  const { data: payment } = await supabase
+    .from("payments")
+    .select("*")
+    .eq("id", params.paymentId)
+    .single();
+  if (!payment) throw new Error(`Held payment ${params.paymentId} not found`);
+  if (payment.status !== "escrowed") return;
+
+  if (!params.buyerWon) {
+    await supabase
+      .from("payments")
+      .update({
+        status: "released",
+        metadata: {
+          ...((payment.metadata as Record<string, unknown>) ?? {}),
+          settled_reason: params.lostReason,
+        },
+      })
+      .eq("id", payment.id);
+    return;
+  }
+
+  const { data: buyerWallet } = await supabase
+    .from("wallets")
+    .select("address")
+    .eq("id", params.buyerWalletId)
+    .single();
+  if (!buyerWallet) {
+    throw new Error(
+      `Buyer wallet ${params.buyerWalletId} not found — cannot refund held payment ${payment.id}`,
+    );
+  }
+
+  const treasury = await ensureTreasuryWallet();
+  const refundTxId = await transferUsdc(
+    treasury.circle_wallet_id,
+    buyerWallet.address as Address,
+    String(payment.amount_usdc),
+  );
+  if (!refundTxId) {
+    throw new Error(`Refund transfer for held payment ${payment.id} did not return a transaction id`);
+  }
+  // Rejects on a terminal failure state, including a revert that still
+  // produced a txHash — see lib/escrow.ts's waitForTxHash.
+  const refundTxHash = await waitForTxHash(refundTxId);
+
+  await supabase
+    .from("payments")
+    .update({
+      status: "refunded",
+      tx_hash: refundTxHash,
+      metadata: {
+        ...((payment.metadata as Record<string, unknown>) ?? {}),
+        collected_tx_hash: payment.tx_hash,
+        settled_reason: params.wonReason,
+      },
+    })
+    .eq("id", payment.id);
+}
+
+/**
+ * Settles the ~2% dispute-contingency holdback (Phase 4) collected for real
+ * at task-funding time (lib/estimator/service.ts's creditSessionToTask).
  *
  * No-op if this task never had a contingency payment (e.g. all task-level
  * fee rates configured to 0) or it's already been settled — safe to call
@@ -299,55 +408,20 @@ async function settleDisputeContingency(
   const supabase = createServiceSupabase();
   const { data: payment } = await supabase
     .from("payments")
-    .select("*")
+    .select("id")
     .eq("task_id", taskId)
     .eq("kind", "dispute_contingency")
     .eq("status", "escrowed")
     .maybeSingle();
   if (!payment) return;
 
-  if (!buyerWon) {
-    await supabase
-      .from("payments")
-      .update({
-        status: "released",
-        metadata: {
-          ...((payment.metadata as Record<string, unknown>) ?? {}),
-          settled_reason: "dispute_lost_forfeited",
-        },
-      })
-      .eq("id", payment.id);
-    return;
-  }
-
-  const { data: buyerWallet } = await supabase
-    .from("wallets")
-    .select("address")
-    .eq("id", buyerWalletId)
-    .single();
-  if (!buyerWallet) return;
-
-  const treasury = await ensureTreasuryWallet();
-  const refundTxId = await transferUsdc(
-    treasury.circle_wallet_id,
-    buyerWallet.address as Address,
-    String(payment.amount_usdc),
-  );
-  if (!refundTxId) return;
-  const refundTxHash = await waitForTxHash(refundTxId);
-
-  await supabase
-    .from("payments")
-    .update({
-      status: "refunded",
-      tx_hash: refundTxHash,
-      metadata: {
-        ...((payment.metadata as Record<string, unknown>) ?? {}),
-        collected_tx_hash: payment.tx_hash,
-        settled_reason: "dispute_won_refunded",
-      },
-    })
-    .eq("id", payment.id);
+  await refundOrReleaseHeldPayment({
+    paymentId: payment.id,
+    buyerWalletId,
+    buyerWon,
+    wonReason: "dispute_won_refunded",
+    lostReason: "dispute_lost_forfeited",
+  });
 }
 
 function contestWindowHoursForSweep(): number {
