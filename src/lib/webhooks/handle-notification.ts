@@ -28,13 +28,17 @@ export type CircleNotificationEnvelope = {
  *     revert.
  *   - `transactions.*` — wallet-level tx status. Only correlated against
  *     payments rows that already carry a `circle_tx_id` (populated today by
- *     lib/x402.ts and the Gateway deposit route); used to catch failed
- *     transactions that would otherwise leave a payment silently stuck
- *     'escrowed'/'pending' forever, and to backfill tx_hash. It is
- *     deliberately NOT used to drive business-logic state transitions —
- *     validator-service.ts's release()/dispute() calls don't record a
- *     circle_tx_id anywhere today, so there's nothing to correlate those
- *     against; the contracts.eventLog side covers them instead.
+ *     lib/x402.ts, the Gateway deposit route, and validator-service.ts's
+ *     submitDeliverable() call via its `kind: 'submission'` payments row);
+ *     used to catch failed transactions that would otherwise leave a payment
+ *     silently stuck 'escrowed'/'pending' forever, and to backfill tx_hash.
+ *     It is deliberately NOT used to drive business-logic state transitions —
+ *     validator-service.ts's release()/dispute() calls still don't record a
+ *     circle_tx_id anywhere, so there's nothing to correlate those against;
+ *     the contracts.eventLog side covers them instead. (submitDeliverable()
+ *     is different: it also awaits confirmation synchronously and throws —
+ *     surfacing a submission failure immediately rather than only via this
+ *     async webhook path — see validator-service.ts.)
  */
 export async function handleCircleNotification(envelope: CircleNotificationEnvelope): Promise<void> {
   const supabase = createServiceSupabase();

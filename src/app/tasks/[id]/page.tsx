@@ -384,6 +384,9 @@ export default async function TaskDetailPage({
   const { stage, latestDispute } = deriveStage(task);
   const role = task.payer_wallet_id === wallet.id ? "Buyer" : "Seller";
   const jobId = (task.metadata as { erc8183_job_id?: string } | null)?.erc8183_job_id;
+  const submissionError = (
+    task.metadata as { submission_error?: { message: string; failed_at: string; circle_tx_id: string | null } } | null
+  )?.submission_error;
   const sortedDisputes = [...task.disputes].sort(
     (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
   );
@@ -422,6 +425,26 @@ export default async function TaskDetailPage({
             </div>
           </div>
         </div>
+
+        {submissionError && (
+          <section className="space-y-1 rounded-xl border border-red-500/40 bg-red-500/10 p-4">
+            <p className="text-sm font-semibold text-red-400">
+              On-chain delivery submission failed
+            </p>
+            <p className="text-sm text-red-300">{submissionError.message}</p>
+            <p className="text-xs text-red-400/70">
+              No validation was recorded for this task — the delivery never reached the escrow
+              contract. Failed {formatDate(submissionError.failed_at)}
+              {submissionError.circle_tx_id && (
+                <>
+                  {" "}· Circle tx <span className="font-mono">{submissionError.circle_tx_id}</span>
+                </>
+              )}
+              . This needs manual attention (retry the submission or contact support) — it will not
+              resolve on its own.
+            </p>
+          </section>
+        )}
 
         <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
           <Stepper stage={stage} />

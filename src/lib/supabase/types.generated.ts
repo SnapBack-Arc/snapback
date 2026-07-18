@@ -1073,6 +1073,7 @@ export type Database = {
         | "judge_fee"
         | "platform_fee"
         | "insurance_payout"
+        | "submission"
       payment_status:
         | "pending"
         | "escrowed"
@@ -1258,6 +1259,7 @@ export const Constants = {
         "judge_fee",
         "platform_fee",
         "insurance_payout",
+        "submission",
       ],
       payment_status: [
         "pending",

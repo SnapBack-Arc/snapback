@@ -1,0 +1,22 @@
+-- ─────────────────────────────────────────────────────────────
+-- SnapBack — priority fix: wire the on-chain submitDeliverable() call that
+-- was defined (lib/escrow.ts) but had zero call sites anywhere in the app.
+--
+-- Every job stayed stuck at on-chain Status.Funded forever, because nothing
+-- ever moved it to Status.Submitted. Both release() and dispute() require
+-- Status.Submitted and revert otherwise — confirmed live: a real dispute()
+-- call reverted with ESTIMATION_ERROR/"execution reverted", and the app
+-- never noticed, because validator-service.ts's escrowAction() calls never
+-- persisted a circle_tx_id anywhere for the webhook's transaction-failure
+-- handler to correlate against.
+--
+-- 'submission' is a new payment_kind for the fix: a payments row recording
+-- the submitDeliverable() call itself (not a fund movement — amount_usdc is
+-- always 0), so it has a circle_tx_id from the moment the transaction is
+-- submitted and the existing lib/webhooks/handle-notification.ts
+-- transactions.* handler can correlate a FAILED notification against it the
+-- same way it already does for real payments, with zero changes to that
+-- handler needed.
+-- ─────────────────────────────────────────────────────────────
+
+alter type payment_kind add value if not exists 'submission';

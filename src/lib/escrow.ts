@@ -178,6 +178,60 @@ export async function lockFunds(
   return { approveId: approve.data?.id, fundId: fund.data?.id };
 }
 
+/**
+ * Job.status enum, transcribed from SnapBackEscrow.sol — used to check
+ * on-chain state before deciding whether `submit` needs to be called (see
+ * `getJobStatus` below).
+ */
+export const JOB_STATUS = {
+  Open: 0,
+  Funded: 1,
+  Submitted: 2,
+  Completed: 3,
+  Rejected: 4,
+} as const;
+
+const GET_JOB_ABI = [
+  {
+    type: "function",
+    name: "getJob",
+    stateMutability: "view",
+    inputs: [{ name: "jobId", type: "uint256" }],
+    outputs: [
+      {
+        type: "tuple",
+        components: [
+          { name: "client", type: "address" },
+          { name: "provider", type: "address" },
+          { name: "budget", type: "uint256" },
+          { name: "expiredAt", type: "uint64" },
+          { name: "submittedAt", type: "uint64" },
+          { name: "acceptDeadline", type: "uint64" },
+          { name: "status", type: "uint8" },
+          { name: "disputed", type: "bool" },
+        ],
+      },
+    ],
+  },
+] as const;
+
+/**
+ * Reads a job's on-chain status directly (a view call — no wallet/gas
+ * needed). This is the ground truth `submitDeliverable`'s caller checks
+ * before calling `submit`: calling it a second time (e.g. an admin
+ * "revalidate" re-run) would revert with NotFunded once the job is already
+ * past Status.Funded, since `submit` requires exactly that status.
+ */
+export async function getJobStatus(jobId: string): Promise<number> {
+  const job = await publicClient.readContract({
+    address: SNAPBACK_ESCROW,
+    abi: GET_JOB_ABI,
+    functionName: "getJob",
+    args: [BigInt(jobId)],
+  });
+  return job.status;
+}
+
 /** Seller submits a deliverable hash — starts the snapback accept window. */
 export async function submitDeliverable(
   sellerCircleWalletId: string,

@@ -1,7 +1,15 @@
 import "server-only";
+import { keccak256, stringToHex } from "viem";
 import { createServiceSupabase } from "@/lib/supabase/server";
 import { validateDelivery, type StandingPolicy } from "@/lib/validator";
-import { escrowAction } from "@/lib/escrow";
+import {
+  escrowAction,
+  getJobStatus,
+  submitDeliverable,
+  waitForTxHash,
+  JOB_STATUS,
+} from "@/lib/escrow";
+import { ARC_CHAIN_ID } from "@/lib/arc";
 import {
   computeFilingFee,
   isFlaggedForScrutiny,
@@ -40,6 +48,7 @@ export async function runValidation(taskId: string, deliverable: unknown) {
 
   const listing = task.listings as { sla: unknown } | null;
   const buyerWalletId = task.payer_wallet_id as string;
+  const sellerWalletId = task.payee_wallet_id as string;
 
   // escrowAction below talks to Circle's API, which needs Circle's own wallet
   // id — NOT this row's internal `wallets.id` PK used everywhere else here
@@ -50,6 +59,108 @@ export async function runValidation(taskId: string, deliverable: unknown) {
     .eq("id", buyerWalletId)
     .single();
   const buyerCircleWalletId = buyerWallet?.circle_wallet_id;
+
+  const { data: sellerWallet } = await supabase
+    .from("wallets")
+    .select("circle_wallet_id")
+    .eq("id", sellerWalletId)
+    .single();
+  const sellerCircleWalletId = sellerWallet?.circle_wallet_id;
+
+  // Move the job Funded -> Submitted on-chain BEFORE anything else below.
+  // Both release() and dispute() require Status.Submitted and revert
+  // otherwise — this used to not exist anywhere in the app, so every real
+  // validation run attempted an on-chain call guaranteed to revert (confirmed
+  // live: dispute() on a real job failed with ESTIMATION_ERROR/"execution
+  // reverted"), and nothing surfaced it. Checking on-chain status first
+  // (rather than unconditionally calling submit) makes this safe to run on
+  // every validation, including an admin "revalidate" re-run against a job
+  // that's already past Funded — submit is only attempted once per job.
+  //
+  // On failure: stop immediately, before any validations/disputes row or
+  // tasks.status change exists to make this task look like normal in-flight
+  // state. tasks.metadata.submission_error is set and this throws, which
+  // both callers (api/validate, api/tasks/[id]/deliver) already surface as a
+  // 502 with the error message.
+  if (jobId && sellerCircleWalletId) {
+    const status = await getJobStatus(jobId);
+    if (status === JOB_STATUS.Open) {
+      throw new Error(
+        `Job ${jobId} is not funded on-chain yet (status=Open) — cannot validate a task whose escrow was never locked.`,
+      );
+    }
+    if (status === JOB_STATUS.Funded) {
+      const deliverableHash = keccak256(stringToHex(JSON.stringify(deliverable)));
+
+      // Recorded up front (amount_usdc: 0 — no funds move here) purely so
+      // this action has a circle_tx_id from the moment it's submitted: the
+      // existing lib/webhooks/handle-notification.ts transactions.* handler
+      // already flips a payments row to 'failed' when it sees a FAILED
+      // notification correlated by circle_tx_id — it previously had nothing
+      // to correlate against for this call.
+      const { data: submissionPayment } = await supabase
+        .from("payments")
+        .insert({
+          task_id: taskId,
+          from_wallet_id: sellerWalletId,
+          kind: "submission",
+          status: "pending",
+          amount_usdc: 0,
+          chain_id: ARC_CHAIN_ID,
+          metadata: { erc8183_job_id: jobId, reason: "on_chain_submit" },
+        })
+        .select("id")
+        .single();
+
+      let submitTxId: string | undefined;
+      try {
+        submitTxId = await submitDeliverable(sellerCircleWalletId, jobId, deliverableHash);
+        if (!submitTxId) {
+          throw new Error("submitDeliverable did not return a transaction id");
+        }
+        if (submissionPayment) {
+          await supabase
+            .from("payments")
+            .update({ circle_tx_id: submitTxId })
+            .eq("id", submissionPayment.id);
+        }
+        const submitTxHash = await waitForTxHash(submitTxId);
+        if (submissionPayment) {
+          await supabase
+            .from("payments")
+            .update({ status: "released", tx_hash: submitTxHash })
+            .eq("id", submissionPayment.id);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unknown error";
+        if (submissionPayment) {
+          await supabase
+            .from("payments")
+            .update({ status: "failed", error: message, circle_tx_id: submitTxId ?? null })
+            .eq("id", submissionPayment.id);
+        }
+        await supabase
+          .from("tasks")
+          .update({
+            metadata: {
+              ...((task.metadata as Record<string, unknown>) ?? {}),
+              submission_error: {
+                message,
+                circle_tx_id: submitTxId ?? null,
+                failed_at: new Date().toISOString(),
+              },
+            },
+          })
+          .eq("id", taskId);
+        throw new Error(
+          `On-chain delivery submission failed — task marked with a submission_error, no validation was recorded: ${message}`,
+        );
+      }
+    }
+    // Submitted/Completed/Rejected: already past this step (e.g. an admin
+    // revalidate re-run) — nothing to do here, proceed straight to
+    // validation/release/dispute below as normal.
+  }
 
   const result = await validateDelivery({
     policy,
