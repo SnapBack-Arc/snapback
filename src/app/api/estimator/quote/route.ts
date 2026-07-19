@@ -4,14 +4,20 @@ import { getUserWallet } from "@/lib/circle-wallets";
 import { submitQuoteRequest } from "@/lib/estimator/service";
 import { createServiceSupabase } from "@/lib/supabase/server";
 import { contingentDisclosureLine, evaluateBudgetCeiling } from "@/lib/estimator/fees";
+import { findCategory, type CategoryKey } from "@/lib/categories";
 
 /**
  * POST /api/estimator/quote
- * Body: { text }
+ * Body: { category, text }
  *
- * Runs a quote request through the Estimator gate: parse → compare subject +
- * difficulty against the active session → retry (free/charged) or topic change
- * (sweep + reset).
+ * Runs a quote request through the Estimator gate: parse (scoped to
+ * `category`) → compare subject + difficulty against the active session →
+ * retry (free/charged) or topic change (sweep + reset).
+ *
+ * `category` must be one of the fixed keys in lib/categories.ts AND live —
+ * this is the actual enforcement point (the picker's client-side block is
+ * just UX): a request for a coming-soon category is rejected here with a
+ * 400 before submitQuoteRequest even runs, same as any other malformed body.
  */
 export async function POST(request: Request) {
   const session = await getSession();
@@ -20,13 +26,27 @@ export async function POST(request: Request) {
   }
 
   let text: string;
+  let category: string;
   try {
-    ({ text } = await request.json());
+    ({ text, category } = await request.json());
   } catch {
     return NextResponse.json({ error: "invalid body" }, { status: 400 });
   }
   if (typeof text !== "string" || !text.trim()) {
     return NextResponse.json({ error: "text is required" }, { status: 400 });
+  }
+  if (typeof category !== "string") {
+    return NextResponse.json({ error: "category is required" }, { status: 400 });
+  }
+  const categoryDef = findCategory(category);
+  if (!categoryDef) {
+    return NextResponse.json({ error: "unknown category" }, { status: 400 });
+  }
+  if (categoryDef.status !== "live") {
+    return NextResponse.json(
+      { error: `"${categoryDef.label}" is coming soon and isn't accepting tasks yet.` },
+      { status: 400 },
+    );
   }
 
   const wallet = await getUserWallet(session.uid);
@@ -35,7 +55,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await submitQuoteRequest(wallet.id, text.trim());
+    const result = await submitQuoteRequest(wallet.id, category as CategoryKey, text.trim());
 
     const supabase = createServiceSupabase();
     const { data: policies } = await supabase
@@ -75,6 +95,7 @@ export async function POST(request: Request) {
       },
       session: {
         id: result.session.id,
+        category: result.session.category,
         subject: result.session.subject,
         difficulty: result.session.difficulty,
         scope_quantity: result.session.scope_quantity,
@@ -83,12 +104,10 @@ export async function POST(request: Request) {
         // The comparable listings the Estimator itself matched against to
         // produce seller_cost_estimate_usdc (marketplace.ts), price-ascending
         // — the marketplace step's "auto-selected" pick is simply the first
-        // of these, reusing the same matching rather than re-deriving it.
+        // of these, reusing the same matching rather than re-deriving it. All
+        // guaranteed to be genuine category matches now (an exact filter, not
+        // a keyword guess) — see lib/estimator/marketplace.ts.
         matched_listing_ids: (result.session.matched_listing_ids as string[] | null) ?? [],
-        // "keyword": these are a real match on the request's subject.
-        // "fallback": nothing matched — these are just the cheapest active
-        // listings. Callers must not present a fallback pick as relevant.
-        seller_match_type: result.seller_match_type,
       },
     });
   } catch (err) {

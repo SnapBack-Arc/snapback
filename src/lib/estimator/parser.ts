@@ -1,6 +1,7 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireServerEnv } from "@/lib/env";
+import type { CategoryDef } from "@/lib/categories";
 
 /**
  * Estimator spec parser.
@@ -72,7 +73,12 @@ const SPEC_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-const SYSTEM_PROMPT = `You normalize freelance/agent task requests into a structured spec.
+function systemPrompt(category: CategoryDef): string {
+  return `You normalize freelance/agent task requests into a structured spec.
+
+The buyer has already chosen the category "${category.label}" (${category.description})
+before writing this request — parse it as a request within that category. It
+does not need to restate the category itself.
 
 Rules:
 - Correct typos and rewordings. Two requests that mean the same thing must produce
@@ -83,6 +89,7 @@ Rules:
 - difficulty reflects the real work: scale it with scope_quantity and complexity.
   Sourcing 5 suppliers is not the same difficulty as sourcing 50.
 - scope_quantity is the single number that most drives scope, or null.`;
+}
 
 let client: Anthropic | null = null;
 function getClient(): Anthropic {
@@ -93,11 +100,11 @@ function getClient(): Anthropic {
 }
 
 /** Parse a raw quote request into the structured spec the gate compares. */
-export async function parseSpec(rawText: string): Promise<ParsedSpec> {
+export async function parseSpec(rawText: string, category: CategoryDef): Promise<ParsedSpec> {
   const response = await getClient().messages.create({
     model: "claude-opus-4-8",
     max_tokens: 2048,
-    system: SYSTEM_PROMPT,
+    system: systemPrompt(category),
     output_config: {
       effort: "low",
       format: { type: "json_schema", schema: SPEC_SCHEMA },

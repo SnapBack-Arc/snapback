@@ -6,6 +6,7 @@ import { computeFilingFee } from "@/lib/disputes/service";
 import { contestFeeMultiplier } from "@/lib/disputes/contest";
 import { CIRCLE_ARC_BLOCKCHAIN, ARC_CHAIN_ID } from "@/lib/arc";
 import { DEMO_TEST_ACCOUNT_EMAIL, DEMO_TEST_WALLET_REF_ID } from "@/lib/demo/config";
+import type { CategoryKey } from "@/lib/categories";
 import type { Database } from "@/lib/supabase/types";
 
 type WalletRow = Database["public"]["Tables"]["wallets"]["Row"];
@@ -750,32 +751,33 @@ async function purgeDemoTestAccountHistory(walletId: string): Promise<void> {
  * lib/estimator/fees.ts) so both contingent-fee tiers are actually
  * reachable from the live marketplace, not just the 2% micro tier.
  *
- * Categories span genuinely different domains on purpose — the Estimator's
- * matching (lib/estimator/marketplace.ts) is a keyword ILIKE against
- * title/description with no category taxonomy, so a narrow set of listings
- * means most real task descriptions fall through to its "no match, use
- * cheapest overall" fallback and get paired with irrelevant sellers. This
- * doesn't fix that fallback behavior — it can't, by itself, guarantee a
- * relevant match for every possible task — but it gives real matching a
- * fighting chance across the request types a demo is likely to try.
+ * Categories span genuinely different domains on purpose — even now that
+ * matching is an exact category filter (lib/estimator/marketplace.ts) rather
+ * than a keyword ILIKE guess, a demo walking through /marketplace should see
+ * more than one kind of seller. Each listing's `category` is the fixed
+ * taxonomy key from lib/categories.ts — the single source of truth for which
+ * categories exist and which one (Research & Sourcing) is actually live.
  */
 const BASELINE_LISTINGS: {
   title: string;
   description: string;
   price_usdc: number;
   sla: Record<string, unknown>;
+  category: CategoryKey;
 }[] = [
   {
     title: "Copywriting & content",
     description: "Web copy, email sequences, and marketing content matching your brand voice guide.",
     price_usdc: 12,
     sla: { turnaround_hours: 12, tone_match: true },
+    category: "copywriting_content",
   },
   {
     title: "Market research report",
     description: "Structured research reports on any market or competitor set, delivered as a table.",
     price_usdc: 18,
     sla: { turnaround_hours: 24, revisions: 1 },
+    category: "market_research_report",
   },
   {
     title: "Research & Sourcing",
@@ -795,18 +797,21 @@ const BASELINE_LISTINGS: {
     // is placeholder inventory with no seller-side execution behind it at
     // all. See README.md "Simulated vs. real sellers" for the full picture.
     sla: { turnaround_hours: 6, min_sources: 3, agent: "research-sourcing" },
+    category: "research_sourcing",
   },
   {
     title: "Icon & illustration design",
     description: "Custom icon sets and illustrations in SVG, matched to your style reference.",
     price_usdc: 28,
     sla: { format: "SVG", revisions: 2 },
+    category: "icon_illustration_design",
   },
   {
     title: "Data engineering & scripts",
     description: "One-off scripts for data migration, cleaning, and transformation.",
     price_usdc: 65,
     sla: { turnaround_hours: 48, tested: true },
+    category: "data_engineering_scripts",
   },
 ];
 
@@ -843,6 +848,7 @@ async function ensureSellerListings(sellerWalletId: string): Promise<void> {
       price_usdc: l.price_usdc,
       sla: l.sla as never,
       active: true,
+      category: l.category,
     };
     const existingId = existingByTitle.get(l.title);
     const { error } = existingId

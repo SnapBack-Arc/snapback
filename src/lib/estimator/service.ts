@@ -14,6 +14,7 @@ import { computeGuaranteedQuote, type GuaranteedQuote } from "@/lib/estimator/fe
 import { transferUsdc, waitForTxHash } from "@/lib/escrow";
 import { sweepUncontestedContingencies } from "@/lib/disputes/service";
 import { ARC_CHAIN_ID } from "@/lib/arc";
+import { findCategory, type CategoryKey } from "@/lib/categories";
 import type { Database } from "@/lib/supabase/types";
 
 /**
@@ -39,11 +40,6 @@ export type SubmitResult = {
   charged_usdc: number;
   /** Set when the submission failed the gate and swept the prior session. */
   swept?: { session_id: string; amount_usdc: number };
-  /** Whether matched_listing_ids reflects a real keyword match against the
-   *  spec, or is just the cheapest active listings with nothing relevant
-   *  found — callers must not present a "fallback" pick as auto-selected
-   *  for relevance. See estimateSellerCost in lib/estimator/marketplace.ts. */
-  seller_match_type: "keyword" | "fallback";
 };
 
 function quoteFee(): number {
@@ -106,13 +102,25 @@ export async function sweepSessionToTreasury(
 /**
  * Submit a quote request. Parses to a structured spec, runs the combined gate
  * against the active session, and applies the retry / topic-change outcome.
+ *
+ * `category` is chosen by the buyer before any spec text exists (see
+ * TaskSubmissionFlow's picker step) and is re-validated here, server-side,
+ * as live — the picker's own hard block is a UX nicety, not the actual
+ * enforcement. A category that isn't live can't produce a quote no matter
+ * what the client sends.
  */
 export async function submitQuoteRequest(
   payerWalletId: string,
+  category: CategoryKey,
   rawText: string,
 ): Promise<SubmitResult> {
   if (await isWalletFlagged(payerWalletId)) {
     throw new Error("This account is paused by an administrator and can't request new quotes.");
+  }
+
+  const categoryDef = findCategory(category);
+  if (!categoryDef || categoryDef.status !== "live") {
+    throw new Error(`Category "${category}" is not live yet — no quotes can be issued for it.`);
   }
 
   // Same check-on-next-request pattern as the abandonment sweep just below —
@@ -122,7 +130,7 @@ export async function submitQuoteRequest(
   await sweepUncontestedContingencies(payerWalletId);
 
   const supabase = createServiceSupabase();
-  const spec = await parseSpec(rawText);
+  const spec = await parseSpec(rawText, categoryDef);
 
   const { data: fetched } = await supabase
     .from("estimator_sessions")
@@ -151,14 +159,13 @@ export async function submitQuoteRequest(
 
   // ── No active session: this is an original submission (free). ──
   if (!active) {
-    const { session, match_type } = await createSession(payerWalletId, spec);
+    const session = await createSession(payerWalletId, category, spec);
     await recordAttempt(session.id, 1, rawText, spec, "original", 0);
     return {
       session,
       gate_result: "original",
       attempt_no: 1,
       charged_usdc: 0,
-      seller_match_type: match_type,
     };
   }
 
@@ -167,7 +174,7 @@ export async function submitQuoteRequest(
   // ── Gate failed: topic change. Sweep immediately, start a fresh session. ──
   if (!gate.pass) {
     const sweptAmount = await sweepSessionToTreasury(active, "swept");
-    const { session, match_type } = await createSession(payerWalletId, spec);
+    const session = await createSession(payerWalletId, category, spec);
     await recordAttempt(session.id, 1, rawText, spec, "topic_change", 0);
     return {
       session,
@@ -175,7 +182,6 @@ export async function submitQuoteRequest(
       attempt_no: 1,
       charged_usdc: 0,
       swept: { session_id: active.id, amount_usdc: sweptAmount },
-      seller_match_type: match_type,
     };
   }
 
@@ -202,8 +208,11 @@ export async function submitQuoteRequest(
   }
 
   // Scope may have shifted within the free re-quote allowance — refresh the
-  // fee-inclusive figures against the latest spec rather than leaving them stale.
-  const quote = await quoteFor(spec);
+  // fee-inclusive figures against the latest spec rather than leaving them
+  // stale. Category is fixed for the life of the session (chosen before any
+  // spec text existed), so retries reuse the session's own category, not
+  // whatever the client happened to send.
+  const quote = await quoteFor(spec, active.category as CategoryKey);
 
   const { data: updated } = await supabase
     .from("estimator_sessions")
@@ -240,7 +249,6 @@ export async function submitQuoteRequest(
     gate_result: gateResult,
     attempt_no: attemptNo,
     charged_usdc: charged,
-    seller_match_type: quote.match_type,
   };
 }
 
@@ -431,31 +439,35 @@ export async function sweepAbandonedSessions(): Promise<
 // ── helpers ────────────────────────────────────────────────────
 
 /**
- * Pulls a seller cost estimate from 2-3 comparable Marketplace listings and
- * derives the fee-inclusive quote figures from it.
+ * Pulls a seller cost estimate from 2-3 comparable Marketplace listings
+ * within `category` and derives the fee-inclusive quote figures from it.
  */
-async function quoteFor(spec: ParsedSpec): Promise<
-  GuaranteedQuote & { matched_listing_ids: string[]; match_type: "keyword" | "fallback" }
-> {
-  const { seller_cost_estimate_usdc, matched_listing_ids, match_type } =
-    await estimateSellerCost(spec);
+async function quoteFor(
+  spec: ParsedSpec,
+  category: CategoryKey,
+): Promise<GuaranteedQuote & { matched_listing_ids: string[] }> {
+  const { seller_cost_estimate_usdc, matched_listing_ids } = await estimateSellerCost(
+    spec,
+    category,
+  );
   return {
     ...computeGuaranteedQuote(seller_cost_estimate_usdc),
     matched_listing_ids,
-    match_type,
   };
 }
 
 async function createSession(
   payerWalletId: string,
+  category: CategoryKey,
   spec: ParsedSpec,
-): Promise<{ session: SessionRow; match_type: "keyword" | "fallback" }> {
+): Promise<SessionRow> {
   const supabase = createServiceSupabase();
-  const quote = await quoteFor(spec);
+  const quote = await quoteFor(spec, category);
   const { data, error } = await supabase
     .from("estimator_sessions")
     .insert({
       payer_wallet_id: payerWalletId,
+      category,
       subject: spec.subject,
       subject_key: spec.subject_key,
       difficulty: spec.difficulty,
@@ -475,7 +487,7 @@ async function createSession(
   if (error || !data) {
     throw new Error(`Failed to create estimator session: ${error?.message}`);
   }
-  return { session: data, match_type: quote.match_type };
+  return data;
 }
 
 async function recordAttempt(

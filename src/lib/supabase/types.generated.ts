@@ -269,6 +269,7 @@ export type Database = {
       estimator_sessions: {
         Row: {
           attempt_count: number
+          category: Database["public"]["Enums"]["listing_category"]
           created_at: string
           difficulty: number
           disclosed_contingent_fee_pct: number | null
@@ -292,6 +293,7 @@ export type Database = {
         }
         Insert: {
           attempt_count?: number
+          category: Database["public"]["Enums"]["listing_category"]
           created_at?: string
           difficulty: number
           disclosed_contingent_fee_pct?: number | null
@@ -315,6 +317,7 @@ export type Database = {
         }
         Update: {
           attempt_count?: number
+          category?: Database["public"]["Enums"]["listing_category"]
           created_at?: string
           difficulty?: number
           disclosed_contingent_fee_pct?: number | null
@@ -480,6 +483,7 @@ export type Database = {
       listings: {
         Row: {
           active: boolean
+          category: Database["public"]["Enums"]["listing_category"]
           created_at: string
           description: string | null
           id: string
@@ -491,6 +495,7 @@ export type Database = {
         }
         Insert: {
           active?: boolean
+          category: Database["public"]["Enums"]["listing_category"]
           created_at?: string
           description?: string | null
           id?: string
@@ -502,6 +507,7 @@ export type Database = {
         }
         Update: {
           active?: boolean
+          category?: Database["public"]["Enums"]["listing_category"]
           created_at?: string
           description?: string | null
           id?: string
@@ -1065,6 +1071,12 @@ export type Database = {
         | "topic_change"
       estimator_session_status: "active" | "credited" | "swept" | "abandoned"
       insurance_pool_direction: "top_up" | "withdraw"
+      listing_category:
+        | "research_sourcing"
+        | "copywriting_content"
+        | "market_research_report"
+        | "icon_illustration_design"
+        | "data_engineering_scripts"
       payment_kind:
         | "deposit"
         | "escrow"
@@ -1253,6 +1265,13 @@ export const Constants = {
       ],
       estimator_session_status: ["active", "credited", "swept", "abandoned"],
       insurance_pool_direction: ["top_up", "withdraw"],
+      listing_category: [
+        "research_sourcing",
+        "copywriting_content",
+        "market_research_report",
+        "icon_illustration_design",
+        "data_engineering_scripts",
+      ],
       payment_kind: [
         "deposit",
         "escrow",

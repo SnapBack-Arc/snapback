@@ -7,6 +7,7 @@ import { formatUsdc } from "@/lib/format";
 import AgentRoster, { AGENT_COLOR, type AgentEntry } from "@/components/AgentRoster";
 import { isResearchSourcingListing } from "@/lib/listing-agents";
 import { estimateResearchSourcingCostUsdc } from "@/lib/agents/research-sourcing-pricing";
+import { CATEGORIES, findCategory, type CategoryKey } from "@/lib/categories";
 
 type GateResult = "original" | "retry_free" | "retry_charged" | "topic_change";
 
@@ -27,13 +28,13 @@ type QuoteResponse = {
   };
   session: {
     id: string;
+    category: CategoryKey;
     subject: string;
     difficulty: number;
     scope_quantity: number | null;
     attempt_count: number;
     escrow_held_usdc: number;
     matched_listing_ids: string[];
-    seller_match_type: "keyword" | "fallback";
   };
 };
 
@@ -72,6 +73,15 @@ export default function TaskSubmissionFlow({
 }) {
   const router = useRouter();
 
+  // Step 0: category. `pickedCategory` tracks whatever the buyer clicked
+  // (including a coming-soon one, so its "not live" state can be shown
+  // clearly); `category` is only ever set once that pick is confirmed LIVE —
+  // everything below (textarea, quote, submit) gates on `category`, not
+  // `pickedCategory`, so a coming-soon pick can never unlock progression.
+  const [pickedCategory, setPickedCategory] = useState<CategoryKey | null>(null);
+  const pickedCategoryDef = pickedCategory ? findCategory(pickedCategory) : null;
+  const category = pickedCategoryDef?.status === "live" ? pickedCategoryDef : null;
+
   const [specText, setSpecText] = useState(initialSpecText ?? "");
   const [quoting, setQuoting] = useState(false);
   const [quote, setQuote] = useState<QuoteResponse | null>(null);
@@ -85,16 +95,30 @@ export default function TaskSubmissionFlow({
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  function selectCategory(key: CategoryKey) {
+    setPickedCategory(key);
+    // A category switch is a new job by definition — clear any quote/listing
+    // state left over from a previous category rather than let it leak
+    // into this pick.
+    setQuote(null);
+    setQuoteError(null);
+    setListings(null);
+    setListingsError(null);
+    setSelectedListingId(null);
+    setTitle("");
+    setSubmitError(null);
+  }
+
   async function getQuote(e: React.FormEvent) {
     e.preventDefault();
-    if (!specText.trim()) return;
+    if (!specText.trim() || !category) return;
     setQuoting(true);
     setQuoteError(null);
     try {
       const res = await fetch("/api/estimator/quote", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: specText }),
+        body: JSON.stringify({ text: specText, category: category.key }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to get a quote");
@@ -111,18 +135,17 @@ export default function TaskSubmissionFlow({
       setListings(activeListings);
       setListingsError(null);
 
-      // Only ever auto-select the one real worker agent (Research & Sourcing),
-      // and only when it's a genuine keyword match for this request — not
-      // just whatever the fallback path happened to return as "cheapest."
-      // See "Choose a seller" below: every other listing is simulated
-      // inventory and is never offered as a candidate here.
+      // Only ever auto-select the one real worker agent (Research &
+      // Sourcing). matched_listing_ids is now always a genuine category
+      // match (an exact filter, not a keyword guess — see
+      // lib/estimator/marketplace.ts), so the only remaining check is
+      // whether the match happens to be the one listing with a real worker
+      // behind it. See "Choose a seller" below: every other listing is
+      // simulated inventory and is never offered as a candidate here.
       const matched = result.session.matched_listing_ids
         .map((id) => activeListings.find((l) => l.id === id))
         .find((l): l is ListingRow => Boolean(l));
-      const isReal =
-        result.session.seller_match_type === "keyword" &&
-        !!matched &&
-        isResearchSourcingListing(matched.sla);
+      const isReal = !!matched && isResearchSourcingListing(matched.sla);
       setSelectedListingId(isReal && matched ? matched.id : null);
     } catch (err) {
       setQuoteError(err instanceof Error ? err.message : "Failed to get a quote");
@@ -159,18 +182,13 @@ export default function TaskSubmissionFlow({
   }
 
   // The only listing this flow ever shows as a candidate is Research &
-  // Sourcing, and only when it's a genuine keyword match — see the
-  // "Choose a seller" section below for why every other listing is
-  // excluded rather than shown as a simulated competing quote.
+  // Sourcing — see the "Choose a seller" section below for why every other
+  // listing is excluded rather than shown as a simulated competing quote.
   const autoSelectedId = quote?.session.matched_listing_ids.find((id) =>
     listings?.some((l) => l.id === id),
   );
   const matchedListing = listings?.find((l) => l.id === autoSelectedId) ?? null;
-  const isRealMatch =
-    !!quote &&
-    quote.session.seller_match_type === "keyword" &&
-    !!matchedListing &&
-    isResearchSourcingListing(matchedListing.sla);
+  const isRealMatch = !!quote && !!matchedListing && isResearchSourcingListing(matchedListing.sla);
   const selectedListing = isRealMatch ? matchedListing : null;
   const realPriceUsdc =
     isRealMatch && quote
@@ -189,7 +207,7 @@ export default function TaskSubmissionFlow({
       role: "Estimator agent",
       monogram: "E",
       colorClass: AGENT_COLOR.estimator,
-      description: `Generated this quote from ${quote.session.seller_match_type === "keyword" ? "matching" : "the cheapest available"} Marketplace listings.`,
+      description: "Generated this quote from matching Marketplace listings in your chosen category.",
     });
   }
   if (quote && selectedListing && realPriceUsdc !== null) {
@@ -210,30 +228,73 @@ export default function TaskSubmissionFlow({
         </p>
       </div>
 
-      <form onSubmit={getQuote} className="space-y-3">
-        {initialSpecText && (
-          <p className="rounded-lg border border-cyan-500/30 bg-cyan-500/5 px-3 py-2 text-xs text-cyan-300">
-            Pre-filled from a rejected task&apos;s feedback — edit as needed. This is a new,
-            separately-priced task; nothing is resubmitted automatically.
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-zinc-200">1. Choose a category</h2>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {CATEGORIES.map((c) => {
+            const isPicked = pickedCategory === c.key;
+            const isLive = c.status === "live";
+            return (
+              <button
+                key={c.key}
+                type="button"
+                onClick={() => selectCategory(c.key)}
+                className={`w-full rounded-xl border px-4 py-3 text-left transition ${
+                  isPicked
+                    ? isLive
+                      ? "border-emerald-500 bg-emerald-500/10"
+                      : "border-amber-500/60 bg-amber-500/5"
+                    : "border-zinc-800 bg-zinc-900 hover:border-zinc-700"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-white">{c.label}</span>
+                  {!isLive && (
+                    <span className="rounded-full bg-zinc-700/40 px-2 py-0.5 text-xs text-zinc-300">
+                      Coming soon
+                    </span>
+                  )}
+                </div>
+                <p className="mt-0.5 text-sm text-zinc-400">{c.description}</p>
+              </button>
+            );
+          })}
+        </div>
+        {pickedCategoryDef && pickedCategoryDef.status !== "live" && (
+          <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-300">
+            {pickedCategoryDef.label} is coming soon and isn&apos;t accepting tasks yet — pick
+            Research &amp; Sourcing to continue.
           </p>
         )}
-        <textarea
-          value={specText}
-          onChange={(e) => setSpecText(e.target.value)}
-          rows={4}
-          placeholder="e.g. Find 5 suppliers of LED panels in Southeast Asia, deliver as a comparison table."
-          disabled={quoting}
-          className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-60"
-        />
-        <button
-          type="submit"
-          disabled={quoting || !specText.trim()}
-          className="rounded-lg bg-emerald-500 px-4 py-2 font-semibold text-zinc-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {quoting ? "Quoting…" : quote ? "Re-quote" : "Get quote"}
-        </button>
-        {quoteError && <p className="text-sm text-red-400">{quoteError}</p>}
-      </form>
+      </section>
+
+      {category && (
+        <form onSubmit={getQuote} className="space-y-3">
+          <h2 className="text-sm font-semibold text-zinc-200">2. Describe the task</h2>
+          {initialSpecText && (
+            <p className="rounded-lg border border-cyan-500/30 bg-cyan-500/5 px-3 py-2 text-xs text-cyan-300">
+              Pre-filled from a rejected task&apos;s feedback — edit as needed. This is a new,
+              separately-priced task; nothing is resubmitted automatically.
+            </p>
+          )}
+          <textarea
+            value={specText}
+            onChange={(e) => setSpecText(e.target.value)}
+            rows={4}
+            placeholder="e.g. Find 5 suppliers of LED panels in Southeast Asia, deliver as a comparison table."
+            disabled={quoting}
+            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-60"
+          />
+          <button
+            type="submit"
+            disabled={quoting || !specText.trim()}
+            className="rounded-lg bg-emerald-500 px-4 py-2 font-semibold text-zinc-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {quoting ? "Quoting…" : quote ? "Re-quote" : "Get quote"}
+          </button>
+          {quoteError && <p className="text-sm text-red-400">{quoteError}</p>}
+        </form>
+      )}
 
       {quote && (
         <section className="space-y-4 rounded-xl border border-zinc-800 bg-zinc-900 p-5">
