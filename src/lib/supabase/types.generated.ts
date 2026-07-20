@@ -1060,7 +1060,7 @@ export type Database = {
         | "trigger_auto_release"
         | "insurance_pool_top_up"
         | "insurance_pool_withdraw"
-      app_wallet_role: "delegate" | "treasury" | "arbiter"
+      app_wallet_role: "delegate" | "treasury" | "arbiter" | "parallel_payer"
       dispute_kind: "standard" | "post_approval_contest"
       dispute_outcome: "pending" | "favor_payer" | "favor_payee" | "split"
       dispute_status: "open" | "voting" | "resolved" | "rejected"
@@ -1094,6 +1094,7 @@ export type Database = {
         | "submission"
         | "validation_fee"
         | "dispute_contingency"
+        | "marketplace_payment"
       payment_status:
         | "pending"
         | "escrowed"
@@ -1253,7 +1254,7 @@ export const Constants = {
         "insurance_pool_top_up",
         "insurance_pool_withdraw",
       ],
-      app_wallet_role: ["delegate", "treasury", "arbiter"],
+      app_wallet_role: ["delegate", "treasury", "arbiter", "parallel_payer"],
       dispute_kind: ["standard", "post_approval_contest"],
       dispute_outcome: ["pending", "favor_payer", "favor_payee", "split"],
       dispute_status: ["open", "voting", "resolved", "rejected"],
@@ -1289,6 +1290,7 @@ export const Constants = {
         "submission",
         "validation_fee",
         "dispute_contingency",
+        "marketplace_payment",
       ],
       payment_status: [
         "pending",

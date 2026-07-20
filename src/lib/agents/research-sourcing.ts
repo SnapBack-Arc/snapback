@@ -1,6 +1,7 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireServerEnv } from "@/lib/env";
+import { payParallelSearch, ParallelPaymentError } from "@/lib/agents/parallel-client";
 
 /**
  * The ONE genuine, non-simulated worker agent in the marketplace (see
@@ -15,6 +16,17 @@ import { requireServerEnv } from "@/lib/env";
  * special-casing lives only at the trigger point (deciding this listing
  * has an automated worker at all), in
  * /api/tasks/[id]/deliver/route.ts.
+ *
+ * As of the Parallel integration, this also makes one real, paid x402 call
+ * to Parallel's search API (lib/agents/parallel-client.ts) alongside
+ * Claude's own web_search — real USDC on Base mainnet, not simulated. That
+ * payment is a hidden cost-basis input feeding Claude's report, never a
+ * separately-cited source (Claude's web_search results remain the only
+ * citable sources in the deliverable, per the "never fabricate a source"
+ * rule below). If the real payment fails for any reason, the task MUST
+ * still complete on Claude's web_search alone — a marketplace outage can
+ * never block delivery — and the caller records $0 real cost for that run,
+ * not the expected $0.01. See runResearchSourcingAgent's return shape.
  */
 
 export type ResearchFinding = {
@@ -75,17 +87,30 @@ function getClient(): Anthropic {
  * search results Claude found, so step 2 can be constrained to only cite
  * sources that genuinely came back from a search.
  */
-async function research(taskDescription: string): Promise<{
+async function research(
+  taskDescription: string,
+  parallelFinding: string | null,
+): Promise<{
   reportText: string;
   sources: { title: string; url: string }[];
 }> {
+  const userContent = parallelFinding
+    ? [
+        "ADDITIONAL REAL SEARCH RESULT (from a separately paid search API — for your background only, NOT a citable source; do not reference or link to it in your report):",
+        parallelFinding,
+        "",
+        "TASK REQUEST:",
+        taskDescription,
+      ].join("\n")
+    : taskDescription;
+
   const response = await getClient().messages.create({
     model: "claude-opus-4-8",
     max_tokens: 4096,
     system:
       "You are a research & sourcing agent fulfilling a paid task. Use web search to actually investigate the request below, then write a plain-language research report covering what you found, from which sources, and how confident you are in each finding. Only report sources you actually found via search — never fabricate a source, a URL, or a finding you didn't verify.",
     tools: [{ type: "web_search_20250305", name: "web_search" }],
-    messages: [{ role: "user", content: taskDescription }],
+    messages: [{ role: "user", content: userContent }],
   });
 
   if (response.stop_reason === "refusal") {
@@ -161,9 +186,46 @@ async function structure(
   return JSON.parse(text.text) as ResearchDeliverable;
 }
 
+/** Real Parallel payment evidence for one task run — null when the payment failed and Claude's web_search ran alone. */
+export type ParallelPaymentRecord = {
+  amountUsdc: number;
+  txHash: string;
+  payerAddress: string;
+  payeeAddress: string;
+};
+
+export type ResearchSourcingResult = {
+  deliverable: ResearchDeliverable;
+  parallelPayment: ParallelPaymentRecord | null;
+  /** Set only when the real payment was attempted and failed — lets the caller's ledger row explain the $0. */
+  parallelPaymentError: string | null;
+};
+
 export async function runResearchSourcingAgent(
   taskDescription: string,
-): Promise<ResearchDeliverable> {
-  const { reportText, sources } = await research(taskDescription);
-  return structure(taskDescription, reportText, sources);
+): Promise<ResearchSourcingResult> {
+  let parallelPayment: ParallelPaymentRecord | null = null;
+  let parallelPaymentError: string | null = null;
+  let parallelFinding: string | null = null;
+
+  try {
+    const paid = await payParallelSearch(taskDescription);
+    parallelPayment = {
+      amountUsdc: paid.amountUsdc,
+      txHash: paid.txHash,
+      payerAddress: paid.payerAddress,
+      payeeAddress: paid.payeeAddress,
+    };
+    parallelFinding = JSON.stringify(paid.result);
+  } catch (err) {
+    // Required behavior: a failed real payment must never block the task —
+    // fall back to Claude's own web_search alone. parallelPayment stays
+    // null, so the caller records $0 real cost for this run, not $0.01.
+    parallelPaymentError = err instanceof ParallelPaymentError ? err.message : String(err);
+    console.error(`[research-sourcing] Parallel payment failed, falling back to web_search only: ${parallelPaymentError}`);
+  }
+
+  const { reportText, sources } = await research(taskDescription, parallelFinding);
+  const deliverable = await structure(taskDescription, reportText, sources);
+  return { deliverable, parallelPayment, parallelPaymentError };
 }

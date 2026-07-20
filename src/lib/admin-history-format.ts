@@ -1,5 +1,6 @@
 import type { TaskDetail } from "@/lib/history";
 import type { PaymentRow } from "@/lib/supabase/types";
+import { ARC_CHAIN_ID } from "@/lib/arc";
 
 /**
  * Plain-language presentation helpers for the admin task-history page.
@@ -52,6 +53,7 @@ const PAYMENT_KIND_LABELS: Record<string, string> = {
   submission: "Deliverable submission (on-chain)",
   validation_fee: "Validator cost-recovery fee",
   dispute_contingency: "Dispute contingency (held)",
+  marketplace_payment: "Real marketplace payment (Parallel)",
 };
 
 export function paymentKindLabel(kind: string): string {
@@ -61,6 +63,16 @@ export function paymentKindLabel(kind: string): string {
 /** True if this payment row has real on-chain evidence, not just a ledger entry. */
 export function isOnChainConfirmed(payment: PaymentRow): boolean {
   return !!payment.tx_hash;
+}
+
+/**
+ * True if this payment moved real money on a real mainnet, not Arc Testnet
+ * like every other transfer in this app. Derived from `chain_id` alone — no
+ * extra column needed, since every payment already carries the chain it
+ * settled on and this is the only path that's ever anything but Arc.
+ */
+export function isRealMainnet(payment: PaymentRow): boolean {
+  return payment.chain_id !== ARC_CHAIN_ID;
 }
 
 /**
@@ -76,6 +88,8 @@ export type TimelineMoney = {
   amountUsdc: number;
   onChain: boolean;
   txHash: string | null;
+  /** Real mainnet USDC (Base), not Arc Testnet like every other line in this ledger — must render distinctly. */
+  isRealMainnet: boolean;
 };
 
 export type TimelineEvent =
@@ -103,7 +117,8 @@ export type TimelineEvent =
       forcedByAdmin: boolean;
       settlements: TimelineMoney[];
     }
-  | { id: string; at: string; kind: "insurance_payout"; item: TimelineMoney };
+  | { id: string; at: string; kind: "insurance_payout"; item: TimelineMoney }
+  | { id: string; at: string; kind: "marketplace_payment"; item: TimelineMoney; succeeded: boolean; failureReason: string | null };
 
 /** Payment kinds all collected together at task-funding time — shown as one grouped event. */
 const FUNDING_KINDS = new Set(["escrow", "platform_fee", "validation_fee", "dispute_contingency", "quote_fee"]);
@@ -114,6 +129,7 @@ function toMoney(payment: PaymentRow, label: string): TimelineMoney {
     amountUsdc: payment.amount_usdc,
     onChain: isOnChainConfirmed(payment),
     txHash: payment.tx_hash,
+    isRealMainnet: isRealMainnet(payment),
   };
 }
 
@@ -130,7 +146,13 @@ function toMoney(payment: PaymentRow, label: string): TimelineMoney {
 function toMoneyAtCollection(payment: PaymentRow, label: string): TimelineMoney {
   const metadata = (payment.metadata ?? {}) as { collected_tx_hash?: string };
   const txHash = metadata.collected_tx_hash ?? payment.tx_hash;
-  return { label, amountUsdc: payment.amount_usdc, onChain: !!txHash, txHash: txHash ?? null };
+  return {
+    label,
+    amountUsdc: payment.amount_usdc,
+    onChain: !!txHash,
+    txHash: txHash ?? null,
+    isRealMainnet: isRealMainnet(payment),
+  };
 }
 
 export function buildTaskTimeline(task: TaskDetail): TimelineEvent[] {
@@ -168,6 +190,20 @@ export function buildTaskTimeline(task: TaskDetail): TimelineEvent[] {
 
   for (const v of task.validations) {
     events.push({ id: v.id, at: v.created_at, kind: "validated", outcome: v.outcome, rationale: v.rationale });
+  }
+
+  const marketplacePayments = task.payments.filter((p) => p.kind === "marketplace_payment");
+  for (const mp of marketplacePayments) {
+    const succeeded = mp.status !== "failed";
+    const metadata = (mp.metadata ?? {}) as { error?: string };
+    events.push({
+      id: mp.id,
+      at: mp.created_at,
+      kind: "marketplace_payment",
+      item: toMoney(mp, paymentKindLabel(mp.kind)),
+      succeeded,
+      failureReason: succeeded ? null : (metadata.error ?? null),
+    });
   }
 
   // The escrow lock's status transitioning away from "escrowed" (release /

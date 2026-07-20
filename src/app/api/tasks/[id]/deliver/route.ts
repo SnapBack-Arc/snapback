@@ -4,6 +4,7 @@ import { getUserWallet } from "@/lib/circle-wallets";
 import { createServiceSupabase } from "@/lib/supabase/server";
 import { runResearchSourcingAgent } from "@/lib/agents/research-sourcing";
 import { runValidation } from "@/lib/validator-service";
+import { BASE_CHAIN_ID } from "@/lib/base";
 
 const RESEARCH_SOURCING_AGENT_MARKER = "research-sourcing";
 
@@ -57,7 +58,46 @@ export async function POST(
   }
 
   try {
-    const deliverable = await runResearchSourcingAgent(task.description ?? task.title);
+    const { deliverable, parallelPayment, parallelPaymentError } = await runResearchSourcingAgent(
+      task.description ?? task.title,
+    );
+
+    // Real-money ledger entry for the Parallel marketplace payment — always
+    // written, whether it succeeded (real amount, real tx hash, real Base
+    // mainnet chain_id) or failed (recorded as $0, status 'failed', so the
+    // ledger never shows the expected $0.01 for a charge that didn't
+    // actually happen).
+    await supabase.from("payments").insert(
+      parallelPayment
+        ? {
+            task_id: taskId,
+            kind: "marketplace_payment",
+            status: "released",
+            amount_usdc: parallelPayment.amountUsdc,
+            tx_hash: parallelPayment.txHash,
+            chain_id: BASE_CHAIN_ID,
+            metadata: {
+              service: "parallel",
+              payer_address: parallelPayment.payerAddress,
+              payee_address: parallelPayment.payeeAddress,
+              network: "eip155:8453",
+            },
+          }
+        : {
+            task_id: taskId,
+            kind: "marketplace_payment",
+            status: "failed",
+            amount_usdc: 0,
+            tx_hash: null,
+            chain_id: BASE_CHAIN_ID,
+            metadata: {
+              service: "parallel",
+              reason: "payment_failed_fell_back_to_web_search",
+              error: parallelPaymentError,
+            },
+          },
+    );
+
     const result = await runValidation(taskId, deliverable);
     return NextResponse.json({ deliverable, result });
   } catch (err) {

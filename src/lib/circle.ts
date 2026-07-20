@@ -19,9 +19,18 @@ import { requireServerEnv } from "@/lib/env";
  *   ARC-TESTNET (`Blockchain.ArcTestnet` in the published SDK types) since
  *   Circle's 2025-11-25 release note "Expanded Contracts support to include
  *   the Arc testnet."
+ *
+ * getLiveDeveloperControlledWalletsClient is a separate client authenticated
+ * against CIRCLE_LIVE_API_KEY/CIRCLE_LIVE_ENTITY_SECRET (Circle's production
+ * entity, not the TEST_API_KEY sandbox the rest of this app runs against).
+ * Circle segregates sandbox and production wallets entirely, so this is the
+ * only client that can see or sign for the `parallel_payer` wallet (real
+ * Base mainnet, real USDC — see lib/app-wallets.ts).
  */
 
 let devClient: ReturnType<typeof initiateDeveloperControlledWalletsClient> | null =
+  null;
+let liveDevClient: ReturnType<typeof initiateDeveloperControlledWalletsClient> | null =
   null;
 let userClient: ReturnType<typeof initiateUserControlledWalletsClient> | null =
   null;
@@ -36,6 +45,16 @@ export function getDeveloperControlledWalletsClient() {
     });
   }
   return devClient;
+}
+
+export function getLiveDeveloperControlledWalletsClient() {
+  if (!liveDevClient) {
+    liveDevClient = initiateDeveloperControlledWalletsClient({
+      apiKey: requireServerEnv("CIRCLE_LIVE_API_KEY"),
+      entitySecret: requireServerEnv("CIRCLE_LIVE_ENTITY_SECRET"),
+    });
+  }
+  return liveDevClient;
 }
 
 export function getUserControlledWalletsClient() {

@@ -8,18 +8,30 @@
  *
  * Priced from the agent's real shape (research-sourcing.ts): two
  * claude-opus-4-8 calls (a tool-using research call, then a low-effort
- * structuring call) plus N web_search calls. Rates verified live against
- * platform.claude.com on 2026-07-17: Opus 4.8 is $5/$25 per MTok
- * input/output; web_search is $10 per 1,000 searches ($0.01/search), billed
- * in addition to the tokens search results consume. There is no per-task
- * telemetry to calibrate against yet, so token counts below are a
- * from-the-shape estimate, not a measurement — the 1.5x buffer exists to
- * absorb that estimation error, not as a profit margin.
+ * structuring call), N web_search calls, plus one real, paid x402 call to
+ * Parallel's search API (lib/agents/parallel-client.ts) — real USDC on Base
+ * mainnet, confirmed live at exactly $0.01/call, unlike the estimated
+ * components below. Rates verified live against platform.claude.com on
+ * 2026-07-17: Opus 4.8 is $5/$25 per MTok input/output; web_search is $10
+ * per 1,000 searches ($0.01/search), billed in addition to the tokens
+ * search results consume. There is no per-task telemetry to calibrate the
+ * token counts against yet, so those remain a from-the-shape estimate, not
+ * a measurement — the 1.5x buffer exists to absorb that estimation error,
+ * not as a profit margin. The Parallel component is the one piece of this
+ * quote that is not an estimate: it's charged once per task regardless of
+ * difficulty/scope (Parallel bills per call, not per result), and is quoted
+ * here at its real, confirmed price even though the actual per-task charge
+ * can come back as $0 if the real payment fails and the task falls back to
+ * web_search alone (see research-sourcing.ts) — this estimate assumes the
+ * happy path, same as every other component here.
  */
 
 const OPUS_INPUT_USD_PER_MTOK = 5;
 const OPUS_OUTPUT_USD_PER_MTOK = 25;
 const WEB_SEARCH_USD_PER_SEARCH = 0.01;
+
+/** Real, confirmed per-call price of Parallel's /api/search — not an estimate, see docblock above. */
+export const PARALLEL_SEARCH_COST_USD = 0.01;
 
 // Estimation-error / overhead buffer over the raw compute estimate below.
 // Deliberately modest — the point of this pricing is honesty about real
@@ -71,7 +83,7 @@ export function estimateResearchSourcingCostUsdc(
     (outputTokens / 1_000_000) * OPUS_OUTPUT_USD_PER_MTOK;
   const searchCostUsd = searches * WEB_SEARCH_USD_PER_SEARCH;
 
-  const rawCostUsd = tokenCostUsd + searchCostUsd;
+  const rawCostUsd = tokenCostUsd + searchCostUsd + PARALLEL_SEARCH_COST_USD;
   const bufferedUsd = rawCostUsd * COST_BUFFER_MULTIPLIER;
 
   return Math.max(0.01, Math.ceil(bufferedUsd * 100) / 100);

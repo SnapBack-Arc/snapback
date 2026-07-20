@@ -9,9 +9,15 @@ const WALLET_SET_NAME = "SnapBack";
 /**
  * Find or create the app's dev-controlled wallet set. All SnapBack SCA wallets
  * live under a single wallet set for the entity. Idempotent by name.
+ *
+ * Accepts an explicit client because the `parallel_payer` wallet lives under
+ * Circle's live/production entity (getLiveDeveloperControlledWalletsClient),
+ * a wallet set entirely separate from the sandbox one every other wallet
+ * uses — same name, different Circle environment.
  */
-export async function ensureWalletSet(): Promise<string> {
-  const client = getDeveloperControlledWalletsClient();
+export async function ensureWalletSet(
+  client: ReturnType<typeof getDeveloperControlledWalletsClient> = getDeveloperControlledWalletsClient(),
+): Promise<string> {
   const existing = await client.listWalletSets();
   // `name` is returned by the API but not surfaced on the SDK's union type.
   const found = existing.data?.walletSets?.find(

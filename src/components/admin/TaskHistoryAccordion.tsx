@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { TaskDetail } from "@/lib/history";
 import { explorerTxUrl } from "@/lib/arc";
+import { baseExplorerTxUrl } from "@/lib/base";
 import { formatDate, formatUsdc } from "@/lib/format";
 import {
   deriveOutcomeLabel,
@@ -71,6 +72,8 @@ function dotClass(event: TimelineEvent): string {
       return event.outcome === "approved" ? "bg-emerald-400" : "bg-amber-400";
     case "judge_votes":
       return "bg-sky-400";
+    case "marketplace_payment":
+      return event.succeeded ? "bg-red-500" : "bg-zinc-500";
     default:
       return "bg-zinc-500";
   }
@@ -79,17 +82,26 @@ function dotClass(event: TimelineEvent): string {
 function MoneyLine({ item }: { item: TimelineMoney }) {
   return (
     <div className="flex items-center justify-between gap-3 text-xs">
-      <span className="text-zinc-400">{item.label}</span>
+      <span className="flex items-center gap-1.5 text-zinc-400">
+        {item.isRealMainnet && (
+          <span className="rounded border border-red-500 bg-red-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-400">
+            Real mainnet
+          </span>
+        )}
+        {item.label}
+      </span>
       <span className="flex items-center gap-2">
-        <span className="font-mono text-zinc-300">{formatUsdc(item.amountUsdc)}</span>
+        <span className={`font-mono ${item.isRealMainnet ? "font-bold text-red-400" : "text-zinc-300"}`}>
+          {formatUsdc(item.amountUsdc)}
+        </span>
         {item.onChain && item.txHash ? (
           <a
-            href={explorerTxUrl(item.txHash)}
+            href={item.isRealMainnet ? baseExplorerTxUrl(item.txHash) : explorerTxUrl(item.txHash)}
             target="_blank"
             rel="noreferrer"
-            className="text-emerald-400 hover:underline"
+            className={item.isRealMainnet ? "text-red-400 hover:underline" : "text-emerald-400 hover:underline"}
           >
-            Confirmed on-chain ↗
+            {item.isRealMainnet ? "Confirmed on Basescan ↗" : "Confirmed on-chain ↗"}
           </a>
         ) : (
           <span className="italic text-zinc-500">Ledger only</span>
@@ -227,6 +239,22 @@ function EventBody({ event }: { event: TimelineEvent }) {
       return (
         <div>
           <p className="font-medium text-white">Insurance-pool payout to buyer</p>
+          <div className="mt-2 rounded-lg border border-zinc-800 bg-zinc-950 p-2">
+            <MoneyLine item={event.item} />
+          </div>
+        </div>
+      );
+    case "marketplace_payment":
+      return (
+        <div>
+          <p className="font-medium text-white">
+            {event.succeeded ? "Real payment to Parallel (search API)" : "Parallel payment failed — fell back to web_search"}
+          </p>
+          <p className="mt-1 text-xs text-zinc-500">
+            {event.succeeded
+              ? "Genuine mainnet USDC transfer, not simulated — the one real marketplace charge in this ledger."
+              : `The task still completed on Claude's own web_search alone.${event.failureReason ? ` (${event.failureReason})` : ""}`}
+          </p>
           <div className="mt-2 rounded-lg border border-zinc-800 bg-zinc-950 p-2">
             <MoneyLine item={event.item} />
           </div>

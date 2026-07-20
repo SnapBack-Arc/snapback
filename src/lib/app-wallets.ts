@@ -1,5 +1,5 @@
 import "server-only";
-import { getDeveloperControlledWalletsClient } from "@/lib/circle";
+import { getDeveloperControlledWalletsClient, getLiveDeveloperControlledWalletsClient } from "@/lib/circle";
 import { ensureWalletSet } from "@/lib/circle-wallets";
 import { createServiceSupabase } from "@/lib/supabase/server";
 import { CIRCLE_ARC_BLOCKCHAIN } from "@/lib/arc";
@@ -12,11 +12,20 @@ type AppWalletRole = Database["public"]["Enums"]["app_wallet_role"];
  * Get-or-create a singleton app-level wallet for a role.
  *
  * The `delegate` wallet is an EOA (Gateway BurnIntents require EIP-712 / EOA
- * signatures and reject smart-contract signatures). Treasury is likewise an EOA
- * so it can be operated directly. Both are dev-controlled on ARC-TESTNET.
+ * signatures and reject smart-contract signatures). Treasury and arbiter are
+ * likewise EOAs so they can be operated directly. All three are
+ * dev-controlled on ARC-TESTNET.
+ *
+ * `blockchain` defaults to ARC-TESTNET — `parallel_payer` is the one
+ * exception, created on real Base mainnet (see ensureParallelPayerWallet)
+ * since that's the only role that ever moves real, non-testnet funds. It
+ * also passes the live Circle client (`client` param) since Circle's
+ * sandbox entity can't create or see real mainnet wallets.
  */
 export async function ensureAppWallet(
   role: AppWalletRole,
+  blockchain: string = CIRCLE_ARC_BLOCKCHAIN,
+  client: ReturnType<typeof getDeveloperControlledWalletsClient> = getDeveloperControlledWalletsClient(),
 ): Promise<AppWalletRow> {
   const supabase = createServiceSupabase();
   const { data: existing } = await supabase
@@ -26,11 +35,10 @@ export async function ensureAppWallet(
     .maybeSingle();
   if (existing) return existing;
 
-  const client = getDeveloperControlledWalletsClient();
-  const walletSetId = await ensureWalletSet();
+  const walletSetId = await ensureWalletSet(client);
   const res = await client.createWallets({
     walletSetId,
-    blockchains: [CIRCLE_ARC_BLOCKCHAIN],
+    blockchains: [blockchain as Parameters<typeof client.createWallets>[0]["blockchains"][number]],
     accountType: "EOA",
     count: 1,
   });
@@ -45,7 +53,7 @@ export async function ensureAppWallet(
       role,
       circle_wallet_id: wallet.id,
       address: wallet.address,
-      blockchain: wallet.blockchain ?? CIRCLE_ARC_BLOCKCHAIN,
+      blockchain: wallet.blockchain ?? blockchain,
       account_type: wallet.accountType ?? "EOA",
     })
     .select()
@@ -67,3 +75,13 @@ export const ensureTreasuryWallet = () => ensureAppWallet("treasury");
  * contracts/script/SetArbiterToAppWallet.s.sol), not embedded as a raw key.
  */
 export const ensureArbiterWallet = () => ensureAppWallet("arbiter");
+
+/**
+ * Admin-only wallet that pays Parallel's real x402 endpoint
+ * (parallelmpp.dev/api/search) for the Research & Sourcing agent's one real
+ * paid search per task. Real Base mainnet, real USDC — every other wallet
+ * in this app is Arc Testnet. Never exposed to buyers: no listing, no
+ * buyer-reachable route references it.
+ */
+export const ensureParallelPayerWallet = () =>
+  ensureAppWallet("parallel_payer", "BASE", getLiveDeveloperControlledWalletsClient());
