@@ -50,3 +50,4 @@ contracts/broadcast/
 
 # Supabase CLI local cache/link state
 supabase/.temp/
+recovery_file_*.dat
