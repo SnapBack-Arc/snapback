@@ -57,6 +57,13 @@ export async function POST(request: Request) {
   try {
     const result = await submitQuoteRequest(wallet.id, category as CategoryKey, text.trim());
 
+    // Checked before any of the fields below, which only exist on the real
+    // quote path — a mismatch never creates a session or generates a quote,
+    // so it gets its own minimal response shape instead.
+    if (result.gate_result === "category_mismatch") {
+      return NextResponse.json({ gate_result: "category_mismatch", reason: result.reason });
+    }
+
     const supabase = createServiceSupabase();
     const { data: policies } = await supabase
       .from("policies")

@@ -38,6 +38,12 @@ type QuoteResponse = {
   };
 };
 
+/** No session/quote fields — a mismatch never creates a session or a quote. */
+type CategoryMismatchResponse = {
+  gate_result: "category_mismatch";
+  reason: string;
+};
+
 const GATE_LABEL: Record<GateResult, string> = {
   original: "First submission — free",
   retry_free: "Free retry",
@@ -86,6 +92,7 @@ export default function TaskSubmissionFlow({
   const [quoting, setQuoting] = useState(false);
   const [quote, setQuote] = useState<QuoteResponse | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [categoryMismatch, setCategoryMismatch] = useState<CategoryMismatchResponse | null>(null);
 
   const [listings, setListings] = useState<ListingRow[] | null>(null);
   const [listingsError, setListingsError] = useState<string | null>(null);
@@ -102,6 +109,7 @@ export default function TaskSubmissionFlow({
     // into this pick.
     setQuote(null);
     setQuoteError(null);
+    setCategoryMismatch(null);
     setListings(null);
     setListingsError(null);
     setSelectedListingId(null);
@@ -114,6 +122,7 @@ export default function TaskSubmissionFlow({
     if (!specText.trim() || !category) return;
     setQuoting(true);
     setQuoteError(null);
+    setCategoryMismatch(null);
     try {
       const res = await fetch("/api/estimator/quote", {
         method: "POST",
@@ -121,6 +130,11 @@ export default function TaskSubmissionFlow({
         body: JSON.stringify({ text: specText, category: category.key }),
       });
       const body = await res.json();
+      if (res.ok && body.gate_result === "category_mismatch") {
+        setQuote(null);
+        setCategoryMismatch(body as CategoryMismatchResponse);
+        return;
+      }
       if (!res.ok) throw new Error(body.error ?? "Failed to get a quote");
       const result = body as QuoteResponse;
       setQuote(result);
@@ -293,6 +307,13 @@ export default function TaskSubmissionFlow({
             {quoting ? "Quoting…" : quote ? "Re-quote" : "Get quote"}
           </button>
           {quoteError && <p className="text-sm text-red-400">{quoteError}</p>}
+          {categoryMismatch && (
+            <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-300">
+              This looks like a different kind of request than {category.label}: {categoryMismatch.reason}{" "}
+              Switch categories above, or rewrite your request so it&apos;s actually about{" "}
+              {category.label.toLowerCase()}.
+            </p>
+          )}
         </form>
       )}
 

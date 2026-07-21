@@ -42,6 +42,19 @@ export type SubmitResult = {
   swept?: { session_id: string; amount_usdc: number };
 };
 
+/**
+ * Distinct from SubmitResult by design — "category_mismatch" is not in the
+ * `estimator_gate_result` DB enum (see GateResult) because nothing is
+ * written to the DB for it: no session is created or touched, no escrow
+ * moves, no quote is generated. It's a pure "please fix your input" signal
+ * caught before any of that happens, so the two types stay a clean
+ * discriminated union on `gate_result` for callers to switch on.
+ */
+export type CategoryMismatchResult = {
+  gate_result: "category_mismatch";
+  reason: string;
+};
+
 function quoteFee(): number {
   return Number(process.env.ESTIMATOR_QUOTE_FEE_USDC ?? "0.05");
 }
@@ -54,6 +67,11 @@ function specOf(session: SessionRow): ParsedSpec {
     scope_quantity: session.scope_quantity,
     deliverable: "",
     constraints: [],
+    // Only used for the gate's field comparison (subject_key/difficulty) —
+    // a stored session already passed the category_fit check at parse time,
+    // so these are unused placeholders here, not a re-check.
+    category_fit: true,
+    category_fit_reason: "",
   };
 }
 
@@ -113,7 +131,7 @@ export async function submitQuoteRequest(
   payerWalletId: string,
   category: CategoryKey,
   rawText: string,
-): Promise<SubmitResult> {
+): Promise<SubmitResult | CategoryMismatchResult> {
   if (await isWalletFlagged(payerWalletId)) {
     throw new Error("This account is paused by an administrator and can't request new quotes.");
   }
@@ -131,6 +149,19 @@ export async function submitQuoteRequest(
 
   const supabase = createServiceSupabase();
   const spec = await parseSpec(rawText, categoryDef);
+
+  // Blocks before any session/escrow state is touched — a mismatch is a
+  // "please fix your input" signal, not a topic change, so whatever active
+  // session already exists is left completely alone and can just be
+  // retried once the buyer rewrites or switches categories.
+  if (!spec.category_fit) {
+    return {
+      gate_result: "category_mismatch",
+      reason:
+        spec.category_fit_reason.trim() ||
+        `This doesn't look like a "${categoryDef.label}" request.`,
+    };
+  }
 
   const { data: fetched } = await supabase
     .from("estimator_sessions")
