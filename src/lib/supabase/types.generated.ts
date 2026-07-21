@@ -1069,6 +1069,7 @@ export type Database = {
         | "trigger_auto_release"
         | "insurance_pool_top_up"
         | "insurance_pool_withdraw"
+        | "reset_demo_test_account"
       app_wallet_role: "delegate" | "treasury" | "arbiter" | "parallel_payer"
       dispute_kind: "standard" | "post_approval_contest"
       dispute_outcome: "pending" | "favor_payer" | "favor_payee" | "split"
@@ -1262,6 +1263,7 @@ export const Constants = {
         "trigger_auto_release",
         "insurance_pool_top_up",
         "insurance_pool_withdraw",
+        "reset_demo_test_account",
       ],
       app_wallet_role: ["delegate", "treasury", "arbiter", "parallel_payer"],
       dispute_kind: ["standard", "post_approval_contest"],

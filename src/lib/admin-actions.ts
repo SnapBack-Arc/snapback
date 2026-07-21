@@ -6,6 +6,7 @@ import { runValidation } from "@/lib/validator-service";
 import { runResearchSourcingAgent } from "@/lib/agents/research-sourcing";
 import { isResearchSourcingListing } from "@/lib/listing-agents";
 import { triggerAutoRelease } from "@/lib/escrow";
+import { resetAndReseedDemoTestAccount } from "@/lib/demo/seed";
 import type { InsurancePoolDirection } from "@/lib/supabase/types";
 
 /**
@@ -168,6 +169,24 @@ export async function triggerAutoReleaseForTask(
     details: { job_id: jobId, circle_tx_id: txId ?? null },
   });
   return { tx_id: txId, job_id: jobId };
+}
+
+// ── demo test account (explicit reset only — see lib/demo/seed.ts) ─
+
+/**
+ * The only way testAccount@snapback.com's history is ever wiped: an admin
+ * explicitly asking for it, never a login. See resetAndReseedDemoTestAccount's
+ * docblock for why the old login-triggered auto-purge was removed.
+ */
+export async function resetDemoTestAccount(adminWalletId: string): Promise<{ user_id: string; wallet_id: string }> {
+  const { userId, walletId } = await resetAndReseedDemoTestAccount();
+  await logAdminAction({
+    adminWalletId,
+    action: "reset_demo_test_account",
+    targetType: "user",
+    targetId: userId,
+  });
+  return { user_id: userId, wallet_id: walletId };
 }
 
 // ── dispute-insurance pool (logical allocation within Treasury) ─

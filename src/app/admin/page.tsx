@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getTreasuryOverview, listOpenDisputesForAdmin } from "@/lib/admin-data";
 import { explorerTxUrl } from "@/lib/arc";
 import { formatDate, formatUsdc } from "@/lib/format";
+import { isDemoModeEnabled } from "@/lib/demo/config";
 import ConfirmAction from "@/components/admin/ConfirmAction";
 import InsurancePoolForm from "@/components/admin/InsurancePoolForm";
 import DisputeResolveActions from "@/components/admin/DisputeResolveActions";
@@ -179,6 +180,26 @@ export default async function AdminTreasuryPage() {
           </div>
         )}
       </section>
+
+      {isDemoModeEnabled() && (
+        <section className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900 p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-zinc-200">Demo test account</h2>
+              <p className="mt-1 text-xs text-zinc-500">
+                testAccount@snapback.com&apos;s history is persistent and never auto-purged on
+                login. This is the only way to wipe it back to the 5 baseline seeded cases.
+              </p>
+            </div>
+            <ConfirmAction
+              label="Reset demo test account"
+              confirmLabel="wipe testAccount@snapback.com's history back to the 5 baseline seeded cases"
+              url="/api/admin/demo-test-account/reset"
+              variant="danger"
+            />
+          </div>
+        </section>
+      )}
     </div>
   );
 }

@@ -707,8 +707,6 @@ async function seedPostApprovalContest(buyer: WalletRow, seller: WalletRow, judg
   await payJudges(task.id, disputeId, votes.map((v) => v.judge), 0.75);
 }
 
-const EXPECTED_TASK_COUNT = 5;
-
 /**
  * Wipes this wallet's task/payment history (but not the wallet itself —
  * unlike newAccount's reset, testAccount's wallet is never deleted). Same
@@ -879,20 +877,28 @@ export async function ensureDemoTestAccountSeeded(): Promise<{ userId: string; w
 
   const seller = await ensureSyntheticWallet(SELLER);
 
+  // PRIORITY FIX: this used to key off *total* task count for this wallet,
+  // which made it indistinguishable from real live-tested activity
+  // accumulating on top of the baseline — every login where the count drifted
+  // from EXPECTED_TASK_COUNT silently wiped that real history (tasks,
+  // payments, real Circle-transferred fees included) via
+  // purgeDemoTestAccountHistory, even though the on-chain money it recorded
+  // was never actually reversible. testAccount's history must persist and
+  // only ever grow; the demo-only marker (metadata.demo, set by every
+  // seedX call below, never set on a real task — see lib/tasks/create.ts)
+  // is what "already seeded" actually means, independent of whatever real
+  // tasks now sit alongside it. Any count > 0 here — whether the full 5 or a
+  // partial run left over from a raced concurrent login — is treated as
+  // "don't touch it again automatically"; a genuine reset is
+  // resetAndReseedDemoTestAccount below, wired to an explicit admin action,
+  // never to a login.
   const { count } = await supabase
     .from("tasks")
     .select("id", { count: "exact", head: true })
-    .eq("payer_wallet_id", wallet.id);
-  if ((count ?? 0) === EXPECTED_TASK_COUNT) {
-    return { userId, walletId: wallet.id }; // fully seeded already — never duplicate
-  }
+    .eq("payer_wallet_id", wallet.id)
+    .contains("metadata", { demo: true });
   if ((count ?? 0) > 0) {
-    // A previous seed attempt died partway through (e.g. a concurrent
-    // duplicate demo-login click racing this one) and, on an older version
-    // of this function, wasn't cleaned up on the way out. Leaving that
-    // behind would permanently wedge this account at "some tasks exist"
-    // without ever completing — wipe it and redo cleanly.
-    await purgeDemoTestAccountHistory(wallet.id);
+    return { userId, walletId: wallet.id };
   }
 
   const judges = await Promise.all(JUDGES.map((j) => ensureSyntheticWallet(j)));
@@ -904,11 +910,41 @@ export async function ensureDemoTestAccountSeeded(): Promise<{ userId: string; w
     await seedPostApprovalContest(wallet, seller, judges);
     await seedEscalatedPanelDispute(wallet, seller, judges);
   } catch (err) {
-    // Don't leave a half-seeded account behind for the next attempt to get
-    // stuck on — clear whatever this run managed to create before rethrowing.
+    // Only ever reached with zero demo-tagged tasks and (per the same
+    // reasoning as ensureDemoTestAccountSeeded's docblock) no real tasks
+    // either, since real submissions require a session that only exists
+    // after a demo login has already seeded the baseline — so this can only
+    // be cleaning up this call's own half-inserted mess, never accumulated
+    // real history.
     await purgeDemoTestAccountHistory(wallet.id);
     throw err;
   }
+
+  return { userId, walletId: wallet.id };
+}
+
+/**
+ * Explicit, admin-only reset: wipes testAccount@snapback.com back to just
+ * the 5 baseline seeded cases, discarding whatever real activity has
+ * accumulated on top. Never called automatically — see
+ * ensureDemoTestAccountSeeded above for why login-triggered resets were
+ * removed. Wired to POST /api/admin/demo-test-account/reset.
+ */
+export async function resetAndReseedDemoTestAccount(): Promise<{ userId: string; walletId: string }> {
+  const userId = await ensureUserId(DEMO_TEST_ACCOUNT_EMAIL);
+  const wallet =
+    (await getUserWallet(userId)) ?? (await createArcWalletForUser(userId, DEMO_TEST_WALLET_REF_ID));
+
+  await purgeDemoTestAccountHistory(wallet.id);
+
+  const seller = await ensureSyntheticWallet(SELLER);
+  const judges = await Promise.all(JUDGES.map((j) => ensureSyntheticWallet(j)));
+
+  await seedCleanApprovedTask(wallet, seller);
+  await seedFavorPayerDispute(wallet, seller, judges);
+  await seedFavorPayeeDispute(wallet, seller, judges);
+  await seedPostApprovalContest(wallet, seller, judges);
+  await seedEscalatedPanelDispute(wallet, seller, judges);
 
   return { userId, walletId: wallet.id };
 }
