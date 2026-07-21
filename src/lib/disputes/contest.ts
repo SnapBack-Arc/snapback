@@ -1,6 +1,6 @@
 import "server-only";
 import { createServiceSupabase } from "@/lib/supabase/server";
-import { computeFilingFee, recordDisputeFiling } from "@/lib/disputes/service";
+import { computeContestFee, recordDisputeFiling } from "@/lib/disputes/service";
 import { runJudgePanel } from "@/lib/disputes/judge-panel";
 import { isWalletFlagged } from "@/lib/wallet-flags";
 
@@ -13,16 +13,16 @@ import { isWalletFlagged } from "@/lib/wallet-flags";
  * tagged `dispute_kind = 'post_approval_contest'` so resolution knows to
  * settle from the Treasury's insurance pool rather than expecting an
  * on-chain escrow reversal.
+ *
+ * This is the one place in the app a buyer actively chooses to contest a
+ * result (as opposed to a standard dispute, always system auto-filed on a
+ * validator rejection — see validator-service.ts) — which is exactly why
+ * it's the only path that charges computeContestFee at all.
  */
 
 /** Contest window after auto-approve — matches the existing accept window by default. */
 export function contestWindowHours(): number {
   return Number(process.env.POST_APPROVAL_CONTEST_WINDOW_HOURS ?? "24");
-}
-
-/** Contest filing fee = the buyer's current (possibly already-escalated) filing fee, scaled up further. */
-export function contestFeeMultiplier(): number {
-  return Number(process.env.CONTEST_FEE_MULTIPLIER ?? "2.5");
 }
 
 export type ContestFilingResult = {
@@ -114,11 +114,9 @@ export async function filePostApprovalContest(
     .single();
   if (!buyerWallet) throw new Error("Buyer has no wallet on file — cannot collect the contest filing fee");
 
-  // Upfront charge higher than a normal dispute filing fee — inherits the
-  // buyer's cost-basis/abuse-escalation multiplier on top, then scales up further.
-  const costBasis = Number(task.amount_usdc ?? 0) + Number(task.validation_fee_usdc ?? 0);
-  const baseFee = await computeFilingFee(buyerWalletId, costBasis);
-  const feeUsdc = Number((baseFee.amount_usdc * contestFeeMultiplier()).toFixed(6));
+  // Flat 50% of the task's initial quote — a deterrent against contesting
+  // lightly, not a risk-priced charge. See computeContestFee's docblock.
+  const feeUsdc = computeContestFee(Number(task.guaranteed_total_usdc ?? 0));
   await recordDisputeFiling({
     disputeId: disputeRow.id,
     walletId: buyerWalletId,

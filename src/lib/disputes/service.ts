@@ -10,14 +10,22 @@ import type { Database } from "@/lib/supabase/types";
 /**
  * Buyer dispute-abuse tracking.
  *
- * Every resolved dispute (standard, or a post-approval contest) settles a
- * filing fee — forfeited to Treasury on a loss, refunded on a win — and
- * updates the buyer's rolling win/loss record. The filing fee itself scales
- * with what's at stake (the task's cost basis) and with how many disputes
- * this buyer has ever filed, win or lose (see computeFilingFee). Separately,
- * a buyer whose loss rate over their last N resolved disputes crosses a
- * harder threshold gets flagged for tighter validator scrutiny on future
- * tasks — that flag is unrelated to the fee amount.
+ * PRIORITY FIX: a filing fee only ever applies to a buyer *choosing* to
+ * contest something — today that's exactly one path,
+ * filePostApprovalContest in lib/disputes/contest.ts. A standard dispute
+ * (dispute_kind: "standard") is always system auto-filed — the validator
+ * rejecting a bad delivery, not a buyer decision — see validator-service.ts's
+ * only call site. It never carries a fee at all, so nothing in this module
+ * computes one for it; recordDisputeFiling below is simply never called on
+ * that path. See computeContestFee for the contest-only fee formula: a flat
+ * 50% of the task's initial quote, no per-buyer escalation.
+ *
+ * Every resolved dispute (either kind) still settles whatever fee it did
+ * collect — forfeited to Treasury on a loss, refunded on a win — and updates
+ * the buyer's rolling win/loss record. Separately, a buyer whose loss rate
+ * over their last N resolved disputes crosses a harder threshold gets
+ * flagged for tighter validator scrutiny on future tasks — that flag is
+ * unrelated to any fee and applies across both dispute kinds.
  */
 
 type StatsRow = Database["public"]["Tables"]["buyer_dispute_stats"]["Row"];
@@ -29,16 +37,6 @@ export function disputeLookbackN(): number {
 /** A harder threshold — crossing this flags the buyer for tighter validator scrutiny. */
 export function hardAbuseLossRateThreshold(): number {
   return Number(process.env.DISPUTE_HARD_ABUSE_LOSS_RATE ?? "0.8");
-}
-
-/** Floor filing fee — the cost-basis-scaled fee below never drops below this. */
-export function baseFilingFeeUsdc(): number {
-  return Number(process.env.DISPUTE_FILING_FEE_USDC ?? "0.05");
-}
-
-/** Linear per-filing escalation step, applied once per lifetime filed dispute. */
-export function filingFeeEscalationStepPct(): number {
-  return Number(process.env.DISPUTE_FEE_ESCALATION_STEP_PCT ?? "0.075");
 }
 
 async function getOrCreateStats(walletId: string): Promise<StatsRow> {
@@ -83,38 +81,20 @@ async function recentLossRate(
   };
 }
 
-export type FilingFeeQuote = {
-  amount_usdc: number;
-  task_cost_basis_usdc: number;
-  disputes_filed_prior: number;
-  escalation_multiplier: number;
-  floor_applied: boolean;
-};
+/** Flat share of the task's initial quote charged as a contest filing fee — no escalation, no per-buyer state. */
+export const CONTEST_FEE_PCT = 0.5;
 
 /**
- * Filing fee scaled to what this dispute actually puts at stake: the task's
- * real cost basis (amount + validation fee), times a linear multiplier that
- * grows with every dispute this buyer has ever filed (win or lose — filing
- * itself is the thing being priced, not losing), floored at a small flat
- * minimum so a $0 first-time filing isn't free.
+ * Contest filing fee: a flat deterrent against contesting lightly, not a
+ * risk-priced charge — 50% of the task's initial quote (guaranteed_total_usdc,
+ * the fee-inclusive figure the buyer actually saw at quote time), refunded in
+ * full on a win, kept as Treasury revenue only on a loss. Applies only to
+ * filePostApprovalContest (lib/disputes/contest.ts) — the one path where a
+ * buyer is actively choosing to contest a result, as opposed to the system
+ * auto-filing on a validator rejection, which never charges anything.
  */
-export async function computeFilingFee(
-  walletId: string,
-  taskCostBasisUsdc: number,
-): Promise<FilingFeeQuote> {
-  const stats = await getOrCreateStats(walletId);
-  const disputesFiledPrior = stats.disputes_filed;
-  const multiplier = 1 + disputesFiledPrior * filingFeeEscalationStepPct();
-  const scaled = taskCostBasisUsdc * multiplier;
-  const floor = baseFilingFeeUsdc();
-  const flooredApplies = scaled < floor;
-  return {
-    amount_usdc: Number((flooredApplies ? floor : scaled).toFixed(6)),
-    task_cost_basis_usdc: taskCostBasisUsdc,
-    disputes_filed_prior: disputesFiledPrior,
-    escalation_multiplier: multiplier,
-    floor_applied: flooredApplies,
-  };
+export function computeContestFee(guaranteedTotalUsdc: number): number {
+  return Number((guaranteedTotalUsdc * CONTEST_FEE_PCT).toFixed(6));
 }
 
 export async function isFlaggedForScrutiny(walletId: string): Promise<boolean> {

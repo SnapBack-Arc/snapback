@@ -2,8 +2,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { createServiceSupabase } from "@/lib/supabase/server";
 import { getUserWallet, createArcWalletForUser } from "@/lib/circle-wallets";
-import { computeFilingFee } from "@/lib/disputes/service";
-import { contestFeeMultiplier } from "@/lib/disputes/contest";
+import { computeContestFee } from "@/lib/disputes/service";
 import { CIRCLE_ARC_BLOCKCHAIN, ARC_CHAIN_ID } from "@/lib/arc";
 import { DEMO_TEST_ACCOUNT_EMAIL, DEMO_TEST_WALLET_REF_ID } from "@/lib/demo/config";
 import type { CategoryKey } from "@/lib/categories";
@@ -439,13 +438,9 @@ async function seedStandardDisputeTask(params: {
     .single();
   if (disputeError || !dispute) throw new Error(`Seed dispute failed: ${disputeError?.message}`);
 
-  const fee = await computeFilingFee(buyer.id, amount);
-  await fabricateFilingFee({
-    disputeId: dispute.id,
-    buyerWalletId: buyer.id,
-    amountUsdc: fee.amount_usdc,
-    label: `${dispute.id}:filing_fee`,
-  });
+  // No filing fee — a standard dispute is always system auto-filed (mirrors
+  // the real validator-rejection path in lib/validator-service.ts), never a
+  // buyer choosing to contest something, so nothing is charged here.
 
   for (const { judge, choice } of params.votes) {
     await insertRow(
@@ -641,8 +636,10 @@ async function seedPostApprovalContest(buyer: WalletRow, seller: WalletRow, judg
 
   await supabase.from("tasks").update({ status: "disputed" }).eq("id", task.id);
 
-  const contestBaseFee = await computeFilingFee(buyer.id, amount);
-  const contestFeeUsdc = Number((contestBaseFee.amount_usdc * contestFeeMultiplier()).toFixed(6));
+  // Real tasks compute this off task.guaranteed_total_usdc, which seeded
+  // tasks never populate — amount is the closest available stand-in for
+  // "the task's initial quote" here, illustrative only.
+  const contestFeeUsdc = computeContestFee(amount);
   await fabricateFilingFee({
     disputeId,
     buyerWalletId: buyer.id,

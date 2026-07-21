@@ -10,11 +10,7 @@ import {
   JOB_STATUS,
 } from "@/lib/escrow";
 import { ARC_CHAIN_ID } from "@/lib/arc";
-import {
-  computeFilingFee,
-  isFlaggedForScrutiny,
-  recordDisputeFiling,
-} from "@/lib/disputes/service";
+import { isFlaggedForScrutiny } from "@/lib/disputes/service";
 import { generateRejectionFeedback } from "@/lib/disputes/feedback";
 import { runJudgePanel } from "@/lib/disputes/judge-panel";
 
@@ -207,7 +203,7 @@ export async function runValidation(taskId: string, deliverable: unknown) {
     await supabase.from("tasks").update({ status: "accepted", accepted_at: new Date().toISOString() }).eq("id", taskId);
   } else {
     // Auto-file: freeze the escrow. The judge panel runs below, once the
-    // dispute row and filing fee exist.
+    // dispute row exists.
     if (jobId && buyerCircleWalletId) {
       txId = await escrowAction(buyerCircleWalletId, "dispute(uint256,bytes32)", [
         jobId,
@@ -227,24 +223,16 @@ export async function runValidation(taskId: string, deliverable: unknown) {
       .select("id")
       .single();
 
-    // Escalating filing fee — forfeited on a loss, refunded on a win (see
-    // lib/disputes/service.ts:resolveDispute). buyerCircleWalletId is
-    // required here: without a real Circle-managed wallet on file, there's
-    // no way to actually collect the fee, so the auto-file itself fails
-    // rather than silently skip a fee that other buyers do pay.
+    // PRIORITY FIX: this never charges a filing fee — the buyer didn't
+    // choose to contest anything, the validator caught a bad delivery and
+    // filed this itself, working as intended. A fee only ever applies to a
+    // buyer actively choosing to contest a result (see
+    // lib/disputes/contest.ts's filePostApprovalContest, the only place
+    // recordDisputeFiling is still called). disputeRow.filing_fee_usdc stays
+    // null here, which is exactly what the task detail / admin pages already
+    // treat as "no fee" — see their `!== null` guards before rendering a
+    // "Filing fee" line.
     if (disputeRow) {
-      if (!buyerCircleWalletId) {
-        throw new Error("Buyer has no Circle-managed wallet — cannot collect the dispute filing fee");
-      }
-      const costBasis = Number(task.amount_usdc ?? 0) + Number(task.validation_fee_usdc ?? 0);
-      const fee = await computeFilingFee(buyerWalletId, costBasis);
-      await recordDisputeFiling({
-        disputeId: disputeRow.id,
-        walletId: buyerWalletId,
-        buyerCircleWalletId,
-        amountUsdc: fee.amount_usdc,
-      });
-
       // Buyer-facing feedback (Phase 3B) — generated now, not deferred to
       // resolution, so a rejected buyer sees more than a frozen escrow right
       // away: what the SLA/criteria gap actually was, and carry-forward
