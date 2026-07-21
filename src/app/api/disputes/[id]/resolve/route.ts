@@ -13,11 +13,12 @@ import { logAdminAction } from "@/lib/admin-audit";
  * SnapBackEscrow.resolveDispute(jobId, favorBuyer, reason) as the contract's
  * `arbiter` (lib/disputes/service.ts:resolveDispute).
  *
- * There is no real judge-draw/vote pipeline wired up yet (JudgeRegistry's
- * on-chain selectPanel/finalize are real but owner-gated by the Foundry
- * deployer key, never a live Circle wallet, and the real judgePool has no
- * staked judges) — this route is the admin's manual override in the
- * meantime, the "force-resolve a stuck dispute" admin-dashboard action.
+ * The real AI judge panel (lib/disputes/judge-panel.ts) is now the default
+ * resolution path and calls this same `resolveDispute` itself — this route
+ * is the admin's emergency manual override, kept for a dispute the panel
+ * can't cleanly resolve (escalated with no clean 5-judge majority) or any
+ * other stuck case, the "force-resolve a stuck dispute" admin-dashboard
+ * action. It is no longer the default/expected path.
  *
  * PRIORITY FIX: SnapBackEscrow.arbiter used to be JudgeRegistry — a contract
  * nothing calls — so this route previously only ever updated the off-chain

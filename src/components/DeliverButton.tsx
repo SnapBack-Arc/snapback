@@ -13,11 +13,19 @@ import { useRouter } from "next/navigation";
 export default function DeliverButton({ taskId }: { taskId: string }) {
   const router = useRouter();
   const [running, setRunning] = useState(false);
+  const [longRunning, setLongRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function run() {
     setRunning(true);
+    setLongRunning(false);
     setError(null);
+    // If the delivery gets disputed, the request stays open through the AI
+    // judge panel's real Claude calls (lib/disputes/judge-panel.ts) before
+    // it returns — typically ~4-12s on top of the agent/validator run. This
+    // just swaps the button text after a beat so that doesn't read as a
+    // hang; the request itself is unchanged.
+    const longRunningTimer = setTimeout(() => setLongRunning(true), 4000);
     try {
       const res = await fetch(`/api/tasks/${taskId}/deliver`, { method: "POST" });
       const body = await res.json();
@@ -26,7 +34,9 @@ export default function DeliverButton({ taskId }: { taskId: string }) {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Delivery failed");
     } finally {
+      clearTimeout(longRunningTimer);
       setRunning(false);
+      setLongRunning(false);
     }
   }
 
@@ -46,7 +56,11 @@ export default function DeliverButton({ taskId }: { taskId: string }) {
         disabled={running}
         className="rounded-lg bg-cyan-500 px-4 py-2 text-sm font-semibold text-zinc-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-60"
       >
-        {running ? "Researching…" : "Run agent — deliver this task"}
+        {running
+          ? longRunning
+            ? "Reviewing delivery — AI judge panel may be weighing in…"
+            : "Researching…"
+          : "Run agent — deliver this task"}
       </button>
       {error && <p className="text-sm text-red-400">{error}</p>}
     </div>

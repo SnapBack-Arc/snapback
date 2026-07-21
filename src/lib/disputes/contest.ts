@@ -1,6 +1,7 @@
 import "server-only";
 import { createServiceSupabase } from "@/lib/supabase/server";
 import { computeFilingFee, recordDisputeFiling } from "@/lib/disputes/service";
+import { runJudgePanel } from "@/lib/disputes/judge-panel";
 import { isWalletFlagged } from "@/lib/wallet-flags";
 
 /**
@@ -8,9 +9,10 @@ import { isWalletFlagged } from "@/lib/wallet-flags";
  *
  * Distinct from a standard dispute: the validator already auto-approved the
  * task (seller already paid), so this reuses the same disputes/judge_votes
- * records and the same 3-judge panel, tagged `dispute_kind =
- * 'post_approval_contest'` so resolution knows to settle from the Treasury's
- * insurance pool rather than expecting an on-chain escrow reversal.
+ * records and the same real judge panel (lib/disputes/judge-panel.ts),
+ * tagged `dispute_kind = 'post_approval_contest'` so resolution knows to
+ * settle from the Treasury's insurance pool rather than expecting an
+ * on-chain escrow reversal.
  */
 
 /** Contest window after auto-approve — matches the existing accept window by default. */
@@ -123,6 +125,11 @@ export async function filePostApprovalContest(
     buyerCircleWalletId: buyerWallet.circle_wallet_id,
     amountUsdc: feeUsdc,
   });
+
+  // Real AI judge panel -- the default resolution path. Synchronous, same
+  // as the standard-dispute call site in validator-service.ts; left to
+  // throw rather than swallowed, since resolving this contest is the point.
+  await runJudgePanel(disputeRow.id);
 
   return { dispute_id: disputeRow.id, fee_usdc: feeUsdc };
 }

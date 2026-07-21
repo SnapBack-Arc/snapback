@@ -440,27 +440,36 @@ export type Database = {
           choice: Database["public"]["Enums"]["vote_choice"]
           created_at: string
           dispute_id: string
+          effort: string | null
           id: string
           judge_wallet_id: string
+          model: string | null
           rationale: string | null
+          tier: number | null
           weight: number
         }
         Insert: {
           choice: Database["public"]["Enums"]["vote_choice"]
           created_at?: string
           dispute_id: string
+          effort?: string | null
           id?: string
           judge_wallet_id: string
+          model?: string | null
           rationale?: string | null
+          tier?: number | null
           weight?: number
         }
         Update: {
           choice?: Database["public"]["Enums"]["vote_choice"]
           created_at?: string
           dispute_id?: string
+          effort?: string | null
           id?: string
           judge_wallet_id?: string
+          model?: string | null
           rationale?: string | null
+          tier?: number | null
           weight?: number
         }
         Relationships: [

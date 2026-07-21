@@ -16,14 +16,17 @@ import {
   recordDisputeFiling,
 } from "@/lib/disputes/service";
 import { generateRejectionFeedback } from "@/lib/disputes/feedback";
+import { runJudgePanel } from "@/lib/disputes/judge-panel";
 
 /**
  * Runs the buyer-agent validator for a delivered task and acts on the outcome:
  *   pass → auto-approve (release escrow to the seller)
- *   fail → auto-file a dispute (freezes escrow; judges are drawn separately)
+ *   fail → auto-file a dispute (freezes escrow), then runs the real AI judge
+ *          panel synchronously (see lib/disputes/judge-panel.ts) — this call
+ *          resolves the dispute itself in the common case.
  *
- * No human is involved here. Person review only enters later, if the dispute
- * escalates to judges.
+ * No human is involved unless the judge panel can't reach a clean result
+ * (see judge-panel.ts), in which case it falls through to admin force-resolve.
  */
 export async function runValidation(taskId: string, deliverable: unknown) {
   const supabase = createServiceSupabase();
@@ -203,7 +206,8 @@ export async function runValidation(taskId: string, deliverable: unknown) {
     }
     await supabase.from("tasks").update({ status: "accepted", accepted_at: new Date().toISOString() }).eq("id", taskId);
   } else {
-    // Auto-file: freeze the escrow. Judges are drawn by the panel keeper.
+    // Auto-file: freeze the escrow. The judge panel runs below, once the
+    // dispute row and filing fee exist.
     if (jobId && buyerCircleWalletId) {
       txId = await escrowAction(buyerCircleWalletId, "dispute(uint256,bytes32)", [
         jobId,
@@ -262,6 +266,15 @@ export async function runValidation(taskId: string, deliverable: unknown) {
       } catch {
         // Leave educational_feedback null rather than fail the validation run.
       }
+
+      // Real AI judge panel -- the default resolution path (replaces admin
+      // force-resolve). Runs synchronously, same as every other step in this
+      // function -- there's no keeper/queue in this app. Left to throw: a
+      // failure here should surface, not be silently swallowed like the
+      // feedback generation above, since resolving the dispute (or cleanly
+      // leaving it for admin review) is the point of this call, not a
+      // value-add on top of it.
+      await runJudgePanel(disputeRow.id);
     }
   }
 

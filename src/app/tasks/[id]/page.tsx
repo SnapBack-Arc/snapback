@@ -166,6 +166,38 @@ function PaymentsList({ payments }: { payments: TaskDetail["payments"] }) {
   );
 }
 
+function VoteRow({ v }: { v: JudgeVoteRow }) {
+  return (
+    <div
+      key={v.id}
+      className="flex items-start justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs"
+    >
+      <span
+        className={`shrink-0 rounded-full px-2 py-0.5 ${
+          v.choice === "favor_payer"
+            ? "bg-emerald-500/15 text-emerald-400"
+            : v.choice === "favor_payee"
+              ? "bg-amber-500/15 text-amber-400"
+              : "bg-zinc-700/40 text-zinc-300"
+        }`}
+      >
+        {v.choice === "favor_payer" ? "Favor buyer" : v.choice === "favor_payee" ? "Favor seller" : "Abstain"}
+      </span>
+      <span className="flex-1 text-zinc-400">
+        {v.model && <span className="mr-1 text-zinc-500">[{v.model}{v.effort ? ` @ ${v.effort}` : ""}]</span>}
+        {v.rationale}
+      </span>
+    </div>
+  );
+}
+
+function voteTally(votes: JudgeVoteRow[]): string {
+  const favorPayer = votes.filter((v) => v.choice === "favor_payer").length;
+  const favorPayee = votes.filter((v) => v.choice === "favor_payee").length;
+  const abstain = votes.filter((v) => v.choice === "abstain").length;
+  return `${favorPayer} favor buyer, ${favorPayee} favor seller${abstain ? `, ${abstain} abstained` : ""}`;
+}
+
 function JudgeVotesList({ votes }: { votes: JudgeVoteRow[] }) {
   if (votes.length === 0) {
     return (
@@ -175,36 +207,53 @@ function JudgeVotesList({ votes }: { votes: JudgeVoteRow[] }) {
       </p>
     );
   }
-  const favorPayer = votes.filter((v) => v.choice === "favor_payer").length;
-  const favorPayee = votes.filter((v) => v.choice === "favor_payee").length;
-  const abstain = votes.filter((v) => v.choice === "abstain").length;
+
+  // Real judge-panel rows carry `tier` (3 or 5) — use it to split an
+  // escalated dispute's initial panel from its escalation panel. Older
+  // demo-seeded rows never set `tier`; fall back to the length heuristic so
+  // that seeded history still renders as before.
+  const hasTierData = votes.some((v) => v.tier !== null);
+  const tier1 = hasTierData ? votes.filter((v) => v.tier === 3) : votes.length > 3 ? [] : votes;
+  const tier2 = hasTierData ? votes.filter((v) => v.tier === 5) : votes.length > 3 ? votes : [];
+  const escalated = tier2.length > 0;
+
+  if (!escalated) {
+    const shown = hasTierData ? tier1 : votes;
+    return (
+      <div className="space-y-2">
+        <p className="text-xs text-zinc-500">
+          {shown.length}-judge panel — {voteTally(shown)}
+        </p>
+        <div className="space-y-1">
+          {shown.map((v) => (
+            <VoteRow key={v.id} v={v} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-2">
-      <p className="text-xs text-zinc-500">
-        {votes.length}-judge panel{votes.length > 3 ? " (escalated from an initial 3-judge split)" : ""}
-        {" — "}
-        {favorPayer} favor buyer, {favorPayee} favor seller{abstain ? `, ${abstain} abstained` : ""}
-      </p>
-      <div className="space-y-1">
-        {votes.map((v) => (
-          <div
-            key={v.id}
-            className="flex items-start justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs"
-          >
-            <span
-              className={`shrink-0 rounded-full px-2 py-0.5 ${
-                v.choice === "favor_payer"
-                  ? "bg-emerald-500/15 text-emerald-400"
-                  : v.choice === "favor_payee"
-                    ? "bg-amber-500/15 text-amber-400"
-                    : "bg-zinc-700/40 text-zinc-300"
-              }`}
-            >
-              {v.choice === "favor_payer" ? "Favor buyer" : v.choice === "favor_payee" ? "Favor seller" : "Abstain"}
-            </span>
-            {v.rationale && <span className="text-zinc-400">{v.rationale}</span>}
-          </div>
-        ))}
+    <div className="space-y-3">
+      <div className="space-y-2">
+        <p className="text-xs text-zinc-500">
+          Initial 3-judge panel — split, no unanimous result — {voteTally(tier1)}
+        </p>
+        <div className="space-y-1">
+          {tier1.map((v) => (
+            <VoteRow key={v.id} v={v} />
+          ))}
+        </div>
+      </div>
+      <div className="space-y-2">
+        <p className="text-xs text-zinc-500">
+          Escalated to a 5-judge panel — ruling by majority — {voteTally(tier2)}
+        </p>
+        <div className="space-y-1">
+          {tier2.map((v) => (
+            <VoteRow key={v.id} v={v} />
+          ))}
+        </div>
       </div>
     </div>
   );
