@@ -33,7 +33,9 @@ const STAGE_ORDER: { key: Stage; label: string }[] = [
  * the tasks row), so the task row itself can't tell "still disputed" from
  * "was disputed, now settled" apart.
  */
-function deriveStage(task: TaskDetail): { stage: Stage; latestDispute: DisputeRow | null } {
+function deriveStage(
+  task: TaskDetail,
+): { stage: Stage; latestDispute: (DisputeRow & { judge_votes: JudgeVoteRow[] }) | null } {
   const latestDispute =
     [...task.disputes].sort(
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
@@ -262,6 +264,59 @@ function JudgeVotesList({ votes }: { votes: JudgeVoteRow[] }) {
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+const NO_DECISIVE_REASON_FALLBACK =
+  "The judge panel did not record a matching reason for this outcome — see the judge panel below for the full detail.";
+
+/**
+ * Condenses a contest verdict down to one line, sourced entirely from
+ * already-stored judge_votes.rationale — no new LLM call. Picks the decisive
+ * tier (tier-2 if escalated, else tier-1 — same split JudgeVotesList already
+ * computes), takes the first vote whose choice matches the final outcome,
+ * and extracts just its first sentence. Falls back to a generic line rather
+ * than crashing if no votes exist yet, or if none of the decisive tier's
+ * votes happen to match the outcome (e.g. an admin force-resolve that
+ * overrode what the panel actually voted).
+ */
+function condenseJudgeReason(outcome: "favor_payer" | "favor_payee", votes: JudgeVoteRow[]): string {
+  const hasTierData = votes.some((v) => v.tier !== null);
+  const tier2 = hasTierData ? votes.filter((v) => v.tier === 5) : votes.length > 3 ? votes : [];
+  const decisive = tier2.length > 0 ? tier2 : hasTierData ? votes.filter((v) => v.tier === 3) : votes;
+
+  const matching = decisive.find((v) => v.choice === outcome && v.rationale);
+  if (!matching?.rationale) return NO_DECISIVE_REASON_FALLBACK;
+
+  const firstSentence = matching.rationale.trim().match(/^[^.!?]*[.!?]/);
+  return firstSentence ? firstSentence[0].trim() : matching.rationale.trim();
+}
+
+function ContestResolutionFeedback({
+  dispute,
+  votes,
+}: {
+  dispute: DisputeRow;
+  votes: JudgeVoteRow[];
+}) {
+  const buyerWon = dispute.outcome === "favor_payer";
+  const reason = condenseJudgeReason(buyerWon ? "favor_payer" : "favor_payee", votes);
+  const feeLine = buyerWon
+    ? `Your ${formatUsdc(dispute.filing_fee_usdc)} filing fee was refunded.`
+    : `Your ${formatUsdc(dispute.filing_fee_usdc)} filing fee was forfeited, as disclosed when you filed this contest.`;
+
+  return (
+    <div
+      className={`space-y-1.5 rounded-xl border p-4 ${
+        buyerWon ? "border-emerald-500/30 bg-emerald-500/5" : "border-amber-500/30 bg-amber-500/5"
+      }`}
+    >
+      <p className={`text-sm font-medium ${buyerWon ? "text-emerald-300" : "text-amber-300"}`}>
+        {buyerWon ? "Contest successful" : "Contest unsuccessful"}
+      </p>
+      <p className="text-sm text-zinc-300">{reason}</p>
+      <p className="text-xs text-zinc-500">{feeLine}</p>
     </div>
   );
 }
@@ -614,6 +669,12 @@ export default async function TaskDetailPage({
             </div>
           </section>
         )}
+
+        {role === "Buyer" &&
+          latestDispute?.dispute_kind === "post_approval_contest" &&
+          latestDispute.status === "resolved" && (
+            <ContestResolutionFeedback dispute={latestDispute} votes={latestDispute.judge_votes} />
+          )}
 
         {stage === "approved" && !latestDispute && canContest && contestDeadline && (
           <ContestDeliveryButton
