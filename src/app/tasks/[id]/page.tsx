@@ -10,8 +10,11 @@ import type { DisputeRow, JudgeVoteRow } from "@/lib/supabase/types";
 import type { EducationalFeedback, RejectionFeedback } from "@/lib/disputes/feedback";
 import AgentRoster, { AGENT_COLOR, type AgentEntry } from "@/components/AgentRoster";
 import DeliverButton from "@/components/DeliverButton";
+import ContestDeliveryButton from "@/components/ContestDeliveryButton";
 import TaskLiveUpdates from "@/components/TaskLiveUpdates";
 import { isResearchSourcingListing } from "@/lib/listing-agents";
+import { contestWindowHours } from "@/lib/disputes/contest";
+import { computeContestFee } from "@/lib/disputes/service";
 
 type Stage = "quoted" | "escrowed" | "validated" | "approved" | "disputed" | "settled";
 
@@ -44,6 +47,10 @@ function deriveStage(task: TaskDetail): { stage: Stage; latestDispute: DisputeRo
     return { stage: "escrowed", latestDispute: null };
   }
   return { stage: "quoted", latestDispute: null };
+}
+
+function isBeforeDeadline(deadline: Date): boolean {
+  return Date.now() < deadline.getTime();
 }
 
 function Stepper({ stage }: { stage: Stage }) {
@@ -445,6 +452,19 @@ export default async function TaskDetailPage({
     isResearchSourcingListing(task.listings?.sla) &&
     task.validations.length === 0;
 
+  let contestDeadline: Date | null = null;
+  if (task.accepted_at) {
+    contestDeadline = new Date(task.accepted_at);
+    contestDeadline.setHours(contestDeadline.getHours() + contestWindowHours());
+  }
+  const canContest =
+    role === "Buyer" &&
+    stage === "approved" &&
+    !latestDispute &&
+    contestDeadline !== null &&
+    isBeforeDeadline(contestDeadline);
+  const contestFeeUsdc = computeContestFee(Number(task.guaranteed_total_usdc ?? 0));
+
   return (
     <main className="min-h-screen bg-zinc-950">
       <Nav email={session.email} />
@@ -595,10 +615,19 @@ export default async function TaskDetailPage({
           </section>
         )}
 
-        {stage === "approved" && !latestDispute && (
+        {stage === "approved" && !latestDispute && canContest && contestDeadline && (
+          <ContestDeliveryButton
+            taskId={task.id}
+            feeUsdc={contestFeeUsdc}
+            deadlineIso={contestDeadline.toISOString()}
+          />
+        )}
+
+        {stage === "approved" && !latestDispute && !canContest && (
           <p className="text-xs text-zinc-500">
-            Approved with no dispute filed. A buyer can still file a post-approval contest within
-            the contest window if the delivery didn&apos;t match what was actually needed.
+            {role === "Buyer" && contestDeadline
+              ? "Approved — the post-approval contest window for this task has closed."
+              : "Approved with no dispute filed. A buyer can still file a post-approval contest within the contest window if the delivery didn't match what was actually needed."}
           </p>
         )}
       </div>

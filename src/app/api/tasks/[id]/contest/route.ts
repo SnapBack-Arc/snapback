@@ -5,7 +5,7 @@ import { filePostApprovalContest } from "@/lib/disputes/contest";
 
 /**
  * POST /api/tasks/[id]/contest
- * Body: { reason }
+ * Body: { reason, confirmText }
  *
  * Files a post-approval contest against an already auto-approved task —
  * distinct from a standard dispute since the validator already found no
@@ -24,13 +24,20 @@ export async function POST(
   const { id: taskId } = await params;
 
   let reason: string;
+  let confirmText: string;
   try {
-    ({ reason } = await request.json());
+    ({ reason, confirmText } = await request.json());
   } catch {
     return NextResponse.json({ error: "invalid body" }, { status: 400 });
   }
   if (typeof reason !== "string" || !reason.trim()) {
     return NextResponse.json({ error: "reason is required" }, { status: 400 });
+  }
+  if (reason.trim().length < 20) {
+    return NextResponse.json({ error: "reason must be at least 20 characters" }, { status: 400 });
+  }
+  if (confirmText !== "CONFIRM") {
+    return NextResponse.json({ error: 'confirmText must be "CONFIRM"' }, { status: 400 });
   }
 
   const wallet = await getUserWallet(session.uid);

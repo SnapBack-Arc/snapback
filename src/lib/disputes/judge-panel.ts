@@ -138,6 +138,7 @@ function buildEvidence(params: {
   deliveredWork: unknown;
   validatorVerdict: unknown;
   disputeReason: string;
+  disputeReasonLabel: string;
   disputeSource: string;
 }): string {
   return [
@@ -154,7 +155,7 @@ function buildEvidence(params: {
     JSON.stringify(params.validatorVerdict),
     "",
     `DISPUTE SOURCE: ${params.disputeSource}`,
-    "DISPUTE REASON:",
+    `${params.disputeReasonLabel}:`,
     params.disputeReason,
   ].join("\n");
 }
@@ -256,6 +257,7 @@ export async function runJudgePanel(disputeId: string): Promise<void> {
       ? dispute.validator_reasoning_snapshot
       : { rationale: validation?.rationale, failures: validation?.failures },
     disputeReason: dispute.reason ?? "(no reason given)",
+    disputeReasonLabel: isContest ? "BUYER'S STATED OBJECTION" : "DISPUTE REASON",
     disputeSource: isContest
       ? "buyer-initiated post-approval contest (validator had already approved; seller already paid)"
       : "auto-filed by the buyer-agent validator's rejection of the delivery",
