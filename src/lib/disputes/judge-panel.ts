@@ -90,6 +90,7 @@ You will be given: the buyer's original task request, the seller's published SLA
 Rules:
 - The seller is accountable ONLY for what their SLA actually promised. A buyer wanting more than the SLA committed to is not the seller's failure.
 - Weigh the delivered work directly against the SLA and the dispute reason -- do not simply defer to the validator's verdict, but do treat it as evidence.
+- If the SLA specifies min_distinct_sources: group any delivered findings connected by overlaps_with (in either direction) together, and count only one member per group toward that minimum -- a finding whose source_role is distributor_or_reseller and which overlaps_with another finding does not add an additional distinct source.
 - vote must be exactly "BUYER_WINS" (refund the buyer) or "SELLER_WINS" (seller's payout stands) -- there is no third option and no partial credit.
 - reasoning: 1-3 plain sentences naming the deciding factor.`;
 

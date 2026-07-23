@@ -93,6 +93,7 @@ STEP 2 — CHECK. Only for criteria with in_scope=true, evaluate the delivered p
 Rules:
 - Be strict and literal on in-scope criteria. Do not assume unstated quality.
 - Do not invent criteria the buyer/policy/SLA didn't actually state.
+- If the SLA specifies min_distinct_sources: group any delivered findings connected by overlaps_with (in either direction) together, and count only one member per group toward that minimum — a finding whose source_role is distributor_or_reseller and which overlaps_with another finding does not add an additional distinct source.
 - rationale: one or two plain sentences on the deciding factor.`;
 
 let client: Anthropic | null = null;

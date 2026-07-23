@@ -791,7 +791,18 @@ const BASELINE_LISTINGS: {
     // worker (lib/agents/research-sourcing.ts) — every other listing here
     // is placeholder inventory with no seller-side execution behind it at
     // all. See README.md "Simulated vs. real sellers" for the full picture.
-    sla: { turnaround_hours: 6, min_sources: 3, agent: "research-sourcing" },
+    // min_distinct_sources/distinctness_basis: the agent now self-reports
+    // source_role/overlaps_with per finding (lib/agents/research-sourcing.ts)
+    // so "3 sources" can't quietly mean the same underlying brand counted
+    // twice via an undisclosed-as-independent distributor — see the README's
+    // "Research & Sourcing" section for the honesty caveat on this basis.
+    sla: {
+      turnaround_hours: 6,
+      min_sources: 3,
+      agent: "research-sourcing",
+      min_distinct_sources: 3,
+      distinctness_basis: "self_reported",
+    },
     category: "research_sourcing",
   },
   {

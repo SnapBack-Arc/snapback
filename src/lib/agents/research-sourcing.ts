@@ -34,6 +34,10 @@ export type ResearchFinding = {
   url: string;
   summary: string;
   confidence: "high" | "medium" | "low";
+  /** Self-reported, best-effort — see STRUCTURE_SCHEMA's description. */
+  source_role: "primary" | "distributor_or_reseller" | "uncertain";
+  /** Exact url of another finding in this SAME deliverable this one overlaps with (same underlying brand/manufacturer), or null. */
+  overlaps_with: string | null;
 };
 
 export type ResearchDeliverable = {
@@ -65,8 +69,19 @@ const STRUCTURE_SCHEMA = {
             description:
               "How directly this source supports the finding — high for a primary/authoritative source directly on point, low for something inferred or only tangentially relevant.",
           },
+          source_role: {
+            type: "string",
+            enum: ["primary", "distributor_or_reseller", "uncertain"],
+            description:
+              "Is this source the PRIMARY manufacturer/brand behind what's being cited ('primary'), or does it present itself as reselling/distributing another company's product or brand ('distributor_or_reseller')? Use 'uncertain' if the source material doesn't make this clear, or if the entity genuinely does both (e.g. distributes others' products while also developing its own) — do not force a guess.",
+          },
+          overlaps_with: {
+            type: ["string", "null"],
+            description:
+              "If this finding represents the same underlying brand/manufacturer/product line as ANOTHER finding in this SAME deliverable (e.g. a distributor of a brand that's also listed separately), set this to that other finding's exact url. Otherwise null. Only mark an overlap when the connection is actually stated or clearly evident in the source material — never infer a speculative connection.",
+          },
         },
-        required: ["title", "url", "summary", "confidence"],
+        required: ["title", "url", "summary", "confidence", "source_role", "overlaps_with"],
         additionalProperties: false,
       },
     },
@@ -157,7 +172,8 @@ async function structure(
     model: "claude-opus-4-8",
     max_tokens: 4096,
     system:
-      "Structure the research report into the deliverable schema. Only cite sources from the REAL SOURCES list provided — never invent a title or URL not in that list.",
+      "Structure the research report into the deliverable schema. Only cite sources from the REAL SOURCES list provided — never invent a title or URL not in that list. " +
+      "For each finding, also assess source_role and overlaps_with by comparing it against every OTHER finding in this same deliverable: mark overlaps_with only when the source material actually discloses that two findings trace back to the same underlying brand/manufacturer (e.g. one page states it distributes or resells the other's brand) — never infer an undisclosed relationship. If a finding's role or relationship to the others isn't clear from what the sources actually say, use 'uncertain' / null rather than guessing.",
     output_config: { effort: "low", format: { type: "json_schema", schema: STRUCTURE_SCHEMA } },
     messages: [
       {

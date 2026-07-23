@@ -60,6 +60,48 @@ the general `/marketplace` browse page still lists every seed listing (with
 its own "Real agent" badge), since browsing inventory and picking a candidate
 for a specific task are different concerns.
 
+**Source independence** — a real dispute exposed a gap where "3 sources"
+could quietly mean the same underlying brand counted twice (a manufacturer
+and its own disclosed distributor, listed as if they were two independent
+suppliers). The agent (`src/lib/agents/research-sourcing.ts`) now
+self-reports two extra fields per finding, decided during the same
+structuring call that already sees every finding at once: `source_role`
+(`"primary"` / `"distributor_or_reseller"` / `"uncertain"` — never forced to
+guess) and `overlaps_with` (the exact `url` of another finding in the *same*
+deliverable it traces back to the same brand as, or `null`). The listing's
+SLA (`src/lib/demo/seed.ts`) now commits to `min_distinct_sources: 3` —
+findings connected by `overlaps_with` group together and count as one toward
+that minimum — alongside `distinctness_basis: "self_reported"`, disclosing
+plainly that this is the agent's own read of what the source material says,
+not an independently verified check.
+
+**This catches disclosed overlap, not all overlap.** It only works when a
+source's own page (or another finding's page) actually states the
+relationship — exactly what happened live (a distributor's page named the
+brand it resells). An undisclosed private-label/OEM relationship neither
+page mentions is invisible to this check; the honest failure mode here is
+false negatives (missed overlap), never false positives, since the agent is
+explicitly told to use `"uncertain"`/`null` rather than infer a speculative
+connection. Both the validator (`src/lib/validator.ts`) and the judge panel
+(`src/lib/disputes/judge-panel.ts`) read the identical `listings.sla` value
+and apply the identical grouping rule in their system prompts, verified live
+to reach matching conclusions independently (see below) — no drift between
+what's checked pre-approval and what a dispute re-checks.
+
+Live-tested end-to-end, unprompted for the outcome either way: one real run
+found 4 genuinely independent primary manufacturers and passed; a second
+real run (plainer task phrasing, same category) had the agent's own report
+flag Good Start Packaging as a disclosed Vegware distributor, populated
+`source_role`/`overlaps_with` correctly, and the validator correctly
+rejected it citing `min_distinct_sources` by name — which auto-filed a
+standard dispute whose judge panel then reached the identical unanimous
+conclusion independently, using the same grouping logic, essentially
+verbatim. **Known tradeoff, not a bug:** in a category where genuinely
+independent primary sources are scarce relative to what's requested, this
+now produces a real, correct validation failure instead of silently
+accepting an inflated source count — which means a live demo run in such a
+category is no longer guaranteed to sail through on the first attempt.
+
 ### Fee model (Phase 4)
 
 Every quote is fee-inclusive (`src/lib/estimator/fees.ts`), three components
