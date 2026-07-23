@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { DEMO_TEST_ACCOUNT_EMAIL, DEMO_NEW_ACCOUNT_EMAIL } from "@/lib/demo/config";
+import { DEMO_TEST_ACCOUNT_EMAIL } from "@/lib/demo/config";
 
 type Phase = "idle" | "sending" | "awaiting_otp" | "finishing";
 type DemoPersona = "test" | "new";
@@ -19,9 +19,14 @@ const DEMO_MODE = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
 // reads as a working login rather than a shortcut.
 const MOCK_OTP_DIGITS = ["4", "8", "2", "9", "1", "3"];
 
+// testAccount only — this is the live demo walkthrough's single account.
+// newAccount@snapback.com (new-user onboarding/wallet-generation) still
+// exists in full behind this: /api/auth/demo, resetDemoNewAccount(), and
+// the real wallet-generation flow it triggers are all untouched. It's just
+// not offered here — a freshly-generated, unfunded wallet has nothing to
+// show in a live walkthrough. See README's demo-mode section for why.
 const DEMO_ACCOUNTS: { value: DemoPersona; email: string; description: string }[] = [
   { value: "test", email: DEMO_TEST_ACCOUNT_EMAIL, description: "existing activity" },
-  { value: "new", email: DEMO_NEW_ACCOUNT_EMAIL, description: "new-user setup" },
 ];
 
 export default function LoginForm() {
@@ -32,9 +37,9 @@ export default function LoginForm() {
   // Keep the SDK instance across the async OTP flow.
   const sdkRef = useRef<unknown>(null);
 
-  // Demo mode only — the email field becomes a dropdown of these two fixed
-  // accounts instead of free text. Kept as separate state from `email` so
-  // the real-OTP path above is untouched either way.
+  // Demo mode only — the email field becomes a dropdown of DEMO_ACCOUNTS
+  // instead of free text. Kept as separate state from `email` so the
+  // real-OTP path above is untouched either way.
   const [demoSelection, setDemoSelection] = useState<DemoPersona | "">("");
   const [demoPersona, setDemoPersona] = useState<DemoPersona | null>(null);
   const [demoPhase, setDemoPhase] = useState<DemoPhase>("idle");
@@ -238,11 +243,11 @@ export default function LoginForm() {
 }
 
 /**
- * Stand-in for Circle's hosted OTP popup, used only for the two demo
- * accounts (see selectDemoAccount/confirmDemoOtp above). The code shown is
- * fixed and never actually checked anywhere — /api/auth/demo bypasses real
- * OTP entirely — this exists purely so the demo walks through the same
- * send-code / enter-code / confirm beats as a real login.
+ * Stand-in for Circle's hosted OTP popup, used only for the demo account(s)
+ * in DEMO_ACCOUNTS (see selectDemoAccount/confirmDemoOtp above). The code
+ * shown is fixed and never actually checked anywhere — /api/auth/demo
+ * bypasses real OTP entirely — this exists purely so the demo walks
+ * through the same send-code / enter-code / confirm beats as a real login.
  */
 function DemoOtpDialog({
   email,

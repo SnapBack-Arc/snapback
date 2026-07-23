@@ -338,6 +338,41 @@ instead and re-run the setup script once per domain change — preview URLs
 rotate per-deploy, so this is a production/custom-domain-only setup, not
 something to re-run per preview.
 
+### Demo mode
+
+`NEXT_PUBLIC_DEMO_MODE=true` gates every demo-only affordance in the app —
+same flag, same on/off behavior everywhere it's checked.
+
+**Login (`src/components/LoginForm.tsx`)** — the email field becomes a
+dropdown of fixed accounts instead of free text, bypassing real Circle
+email-OTP via `POST /api/auth/demo` (`src/lib/demo/*`). **Only
+`testAccount@snapback.com` (persistent seeded history) is offered here.**
+`newAccount@snapback.com` — real first-time onboarding, real Circle
+wallet-generation, wiped back to a clean wallet-less state on every
+selection (`resetDemoNewAccount()`, `src/lib/demo/reset.ts`) — is fully
+implemented and still exercised by its own backend route
+(`POST /api/auth/demo` with `persona: "new"`) and by
+`POST /api/wallet/generate`, but isn't offered in the live walkthrough:
+a freshly-generated, unfunded wallet with zero real balance and zero
+transaction history has nothing to show in a demo, so it was dropped from
+the login dropdown rather than left as a dead-end click. The code path
+stays intact as evidence the real onboarding/wallet-generation flow works,
+not deleted.
+
+**Admin shortcut (`src/app/layout.tsx`)** — a small `SB` mark, bottom-right
+corner, low-opacity, present on every page only when demo mode is on,
+linking straight to `/admin`. Purely a navigation convenience, not a new
+access path: `requireAdmin()`/`requireAdminApi()`'s wallet allowlist check
+(`ADMIN_WALLET_ADDRESSES`, `src/lib/admin.ts`) still fully applies once
+there — this just saves typing the URL during a walkthrough.
+
+**Whoever hosts a walkthrough must set `ADMIN_WALLET_ADDRESSES` to
+testAccount's real wallet address** (`0xd8f7a1896906f4dcf98dae4aefdbd5a8880f8386`)
+in whatever environment actually runs it — local + ngrok per the setup
+above, or a future real deployment — since testAccount is now the only
+account ever logged in for presentation. This is an env var; nothing in
+the app enforces or sets it automatically.
+
 ### Known limitations
 
 - **No evidence/rebuttal submission during an open dispute.** Once a dispute
