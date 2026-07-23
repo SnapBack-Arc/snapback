@@ -60,6 +60,129 @@ the general `/marketplace` browse page still lists every seed listing (with
 its own "Real agent" badge), since browsing inventory and picking a candidate
 for a specific task are different concerns.
 
+### Fee model (Phase 4)
+
+Every quote is fee-inclusive (`src/lib/estimator/fees.ts`), three components
+folded into or disclosed alongside the headline `guaranteed_total_usdc`:
+
+- **Platform fee** — 0.075% of the seller's quoted job cost (`happyPathFeePct`),
+  a buyer-side skim on top of the seller's price, routed to Treasury.
+- **Validation fee** — a flat $0.03 (`validationFeeUsdc`), recovering the real
+  cost of the buyer-agent validator's LLM call. Charged on every task
+  regardless of approve/reject, since that call always runs exactly once.
+- **Dispute contingency** — 2% of job cost for jobs under $50 seller-cost-estimate,
+  1% at or above it (`arbitrationFeePctMicro`/`arbitrationFeePctLarge`,
+  threshold `microTxThresholdUsdc`). Disclosed but never folded into
+  `guaranteed_total_usdc`; held as a refundable escrow holdback rather than
+  charged outright.
+
+All three are collected as **one real Circle transfer, buyer → Treasury**, at
+task-funding time — not just `payments` rows with no matching on-chain
+movement (`creditSessionToTask` in `src/lib/estimator/service.ts`). The
+platform and validation fees are unconditional and marked `released`
+immediately; the contingency is marked `escrowed` and settled for real later —
+refunded in full on clean completion or a buyer-won dispute, kept as real
+Treasury revenue only on a buyer-lost dispute
+(`settleDisputeContingency`/`sweepUncontestedContingencies` in
+`src/lib/disputes/service.ts`).
+
+### Dispute resolution: the real judge panel
+
+**`runJudgePanel()` (`src/lib/disputes/judge-panel.ts`) is the real,
+live, fully off-chain dispute-resolution path — pure Claude API calls, no
+blockchain involved — and it runs automatically on every dispute, both a
+standard validator-filed dispute and a buyer-filed post-approval contest:**
+
+- **Tier 1** (first attempt, every dispute): 2× `claude-opus-4-8` @ high effort
+  + 1× `claude-sonnet-5` @ high effort, fully independent — no judge sees
+  another's vote or reasoning. Resolution requires all three to agree
+  (unanimous); any split, including 2–1, escalates. A judge call that fails
+  outright (refusal, API error, unparseable output) is recorded as an
+  `abstain` and also escalates — it is never retried at this tier.
+- **Tier 2** (escalation only, on any tier-1 split or failure): a fresh,
+  disjoint panel of 3× `claude-opus-4-8` at varying effort + 2× `claude-sonnet-5`
+  @ high effort. Resolution requires a majority (≥3 of 5 agreeing), not
+  unanimity. A failed slot is retried once; if it still fails it's recorded
+  as `abstain` and the majority is evaluated over whatever real votes exist.
+
+Both tiers' votes persist as real `judge_votes` rows on the same dispute (up
+to 8 total on an escalated dispute — see `supabase/migrations/0016_judge_panel.sql`).
+
+**Admin force-resolve is the true fallback, not the primary path.** Only if
+tier 2 also fails to reach a clean ≥3 majority (e.g. a 2–2 tie after a
+permanent slot failure) does a dispute stay `voting` and require a manual
+admin verdict (`DisputeResolveActions.tsx`, `POST /api/disputes/[id]/resolve`).
+When it is used, it's a real on-chain call, not just a DB update:
+`SnapBackEscrow.resolveDispute` is `onlyArbiter`, and `arbiter` is now a
+Circle-managed app wallet (`contracts/script/SetArbiterToAppWallet.s.sol`,
+`scripts/provision-arbiter-wallet.ts`, `lib/app-wallets.ts`'s
+`ensureArbiterWallet`) that the admin route signs
+`resolveDispute(jobId, favorBuyer, reason)` with directly (`lib/escrow.ts`'s
+`resolveJobDispute`) before touching any off-chain row. This on-chain call
+only applies to `standard` disputes — a `post_approval_contest` never froze
+anything on-chain (the seller was already auto-paid), so a buyer win there
+settles from Treasury's insurance pool instead.
+
+**`JudgeRegistry.sol` is a separate, dormant on-chain contract — not the
+system described above.** Its `selectPanel()` is `onlyOwner`, gated by a
+local Foundry deployer keystore (`--account snapback-deployer
+--password-file ...`), not a Circle-managed wallet, and the real on-chain
+judge pool has zero staked judges today, so the call would revert regardless.
+The webhook receiver (`src/app/api/webhooks/circle/route.ts`) reflects
+`PanelSelected`/`VoteCast`/`VerdictReached` if they ever fire, but nothing in
+this app ever calls `selectPanel` — it's an unused on-chain design, entirely
+separate from the real off-chain panel above.
+
+### Post-approval contest
+
+A buyer can contest a delivery the validator already **auto-approved** —
+distinct from a standard dispute, which the system auto-files itself on a
+validator rejection. Filing a contest (`filePostApprovalContest` in
+`src/lib/disputes/contest.ts`, `POST /api/tasks/[id]/contest`,
+`ContestDeliveryButton.tsx`):
+
+- Only within a window after auto-approval — 24h by default
+  (`contestWindowHours`, `POST_APPROVAL_CONTEST_WINDOW_HOURS`).
+- Charges a flat filing fee of **50% of the task's full guaranteed quote**
+  (`computeContestFee`, `CONTEST_FEE_PCT` in `src/lib/disputes/service.ts`) —
+  a deterrent against contesting lightly, not a risk-priced charge. Refunded
+  in full on a win, kept as real Treasury revenue on a loss.
+- Requires a specific written objection, not just a click — minimum 20
+  characters, enforced both client-side and re-validated server-side — behind
+  a typed `CONFIRM` gate before it submits.
+
+A contest reuses the exact same `disputes`/`judge_votes` tables and the same
+real judge panel described above, tagged `dispute_kind = 'post_approval_contest'`.
+The buyer's objection text is injected into the judge panel's evidence prompt
+labeled **`BUYER'S STATED OBJECTION:`**, versus **`DISPUTE REASON:`** for a
+standard dispute — the same shared `buildEvidence()` function
+(`src/lib/disputes/judge-panel.ts`), just a relabeled line. The panel weighs
+it as context alongside the SLA and delivered work; it does not gate on it —
+there's no keyword match or automatic accept based on the objection text
+alone.
+
+### Contest resolution feedback
+
+Once a contest resolves — win or loss — the buyer sees a short outcome box in
+the same page slot the "Contest this delivery" button occupied
+(`ContestResolutionFeedback` in `src/app/tasks/[id]/page.tsx`): the outcome
+("Contest successful"/"Contest unsuccessful"), one line of reasoning, and the
+fee outcome (refunded/forfeited). The one-line reasoning is condensed from
+already-stored data — the decisive tier's `judge_votes.rationale`, first
+sentence of the first vote agreeing with the final outcome
+(`condenseJudgeReason`, same file) — **no new LLM call**. If no votes exist
+yet, or none of the decisive tier's votes actually match the recorded outcome
+(e.g. an admin force-resolve that overrode what the panel voted), it falls
+back to a generic line rather than guessing or crashing.
+
+This is separate from the existing, richer `educational_feedback` box (a real
+Claude call — `generateEducationalFeedback`, `src/lib/disputes/feedback.ts`,
+invoked from `settleContestWin` in `src/lib/disputes/service.ts`) that
+already renders further down the page specifically on a contest **win**
+(gap summary + rewritten-spec suggestions). That box is untouched: on a win,
+both boxes now render; on a loss, the short box is the only feedback shown,
+where previously there was none.
+
 ### Event-driven state (no keeper/cron)
 
 Nothing schedules quote-escrow sweeps, validator runs, or judge draws — there
@@ -97,44 +220,6 @@ anything, then dispatches by `notificationType`
   `payments.status` to `'failed'` instead of leaving it silently stuck
   `'escrowed'`/`'pending'` forever) and to backfill `tx_hash`.
 
-**JudgeRegistry's panel-draw is observed, never triggered.** `selectPanel()`
-is `onlyOwner`, gated by a local Foundry deployer keystore (`--account
-snapback-deployer --password-file ...`) — not a Circle-managed wallet — and
-the real judge pool has zero staked judges today, so the call would revert
-regardless. The webhook reflects `PanelSelected`/`VoteCast`/`VerdictReached`
-if they ever fire, but never calls `selectPanel` itself; the admin dashboard's
-"force-resolve dispute" action remains the real, live path for a stuck
-dispute — and, as of the priority fix below, actually settles it on-chain
-rather than only in the database.
-
-**Force-resolve is now a real on-chain call, not just a DB update.**
-`SnapBackEscrow.resolveDispute` is `onlyArbiter`, and `arbiter` used to be
-set to the JudgeRegistry contract address — which nothing calls (see above),
-so every force-resolve previously updated only the `disputes` row while the
-on-chain job stayed frozen (`disputed = true`) forever and the buyer's or
-seller's funds never moved. `arbiter` is now repointed
-(`contracts/script/SetArbiterToAppWallet.s.sol`, run once with the deployer
-keystore) at a new singleton `arbiter` app wallet — a Circle-managed EOA,
-provisioned the same way as `delegate`/`treasury`
-(`scripts/provision-arbiter-wallet.ts`, `lib/app-wallets.ts`'s
-`ensureArbiterWallet`) — which the admin route now signs
-`resolveDispute(jobId, favorBuyer, reason)` with directly
-(`lib/escrow.ts`'s `resolveJobDispute`) before touching any off-chain row.
-Only applies to `standard` disputes — a `post_approval_contest` never froze
-anything on-chain (the seller was already auto-paid), so it settles a buyer
-win from Treasury's insurance pool instead, same as before.
-
-**Known limitation: no evidence/rebuttal submission during a dispute.**
-Once a dispute is open (buyer-filed, seller auto-disputed by the validator,
-or a post-approval contest), neither party has a way to actively submit
-additional evidence or a rebuttal before it's resolved — both sides are
-passive once filed. This applies symmetrically to buyers and sellers; it
-isn't specific to validator rejections (sellers already get judge-reviewed
-disputes at zero cost on every rejection, so no separate seller-side contest
-path is needed — see `src/lib/disputes/contest.ts`'s docblock for why that
-asymmetry only exists on the buyer/auto-approve side). Noted as a future
-improvement, not built yet.
-
 **The task detail stepper** updates live from webhook-driven `job_events`/
 `payments` writes, with a client-side poll (`TaskLiveUpdates`, 6s, only while
 the task isn't in a settled stage) as the fallback for a delayed or missed
@@ -170,9 +255,53 @@ instead and re-run the setup script once per domain change — preview URLs
 rotate per-deploy, so this is a production/custom-domain-only setup, not
 something to re-run per preview.
 
+### Known limitations
+
+- **No evidence/rebuttal submission during an open dispute.** Once a dispute
+  is open (buyer-filed, seller auto-disputed by the validator, or a
+  post-approval contest), neither party has a way to actively submit
+  additional evidence or a rebuttal before it's resolved — both sides are
+  passive once filed. This applies symmetrically to buyers and sellers; it
+  isn't specific to validator rejections (sellers already get judge-reviewed
+  disputes at zero cost on every rejection, so no separate seller-side
+  contest path is needed — see `src/lib/disputes/contest.ts`'s docblock for
+  why that asymmetry only exists on the buyer/auto-approve side). Noted as a
+  future improvement, not built yet.
+- **Insurance payout on a contest win is ledger-only.** `settleContestWin`
+  (`src/lib/disputes/service.ts`) inserts a `payments` row (`kind:
+  "insurance_payout"`, `status: "released"`) for the amount owed to a
+  contest-winning buyer, but never actually calls `transferUsdc` — no real
+  Circle transfer happens, unlike the filing-fee refund next to it in the
+  same resolution flow, which does. Confirmed bug, unfixed.
+- **The admin dashboard's treasury discrepancy note is now stale, and its
+  kept-revenue total undercounts.** `getTreasuryOverview`
+  (`src/lib/admin-data.ts`) still surfaces a `discrepancyNote` claiming no
+  revenue line has a matching on-chain transfer — no longer true since the
+  Phase 4 fee model above made platform, validation, and contingency fees
+  real Circle transfers. Separately, `totalKeptRevenueUsdc` omits the
+  validation fee entirely and any settled/forfeited dispute-contingency
+  holdback — both are real kept revenue with no corresponding line in
+  `revenueLines` or the total.
+- **The judge panel's tier-2 fallback has no staleness alert.** A dispute
+  stuck in `voting` after tier 2 fails to reach majority is invisible until
+  an admin manually opens `/admin` — `listOpenDisputesForAdmin`
+  (`src/lib/admin-data.ts`) is a plain worklist query, not a proactive
+  notification of any kind.
+- **Genuine buyer wins are hard to reach organically through the real
+  contest path.** The judge panel's system prompt holds that "the seller is
+  accountable ONLY for what their SLA actually promised" — combined with the
+  current Research & Sourcing SLA's low bar (≥3 sources, 6-hour turnaround),
+  almost any competent delivery clears it, so judges consistently treat a
+  buyer's broader expectation as scope creep rather than a seller failure.
+  Several live-tested contests this week, across a range of framings (a
+  missing item, a strict format requirement, two genuine spec-ambiguity
+  arguments), all resolved unanimously in the seller's favor at tier 1. This
+  is disclosed here rather than hidden, consistent with the honesty
+  principle used throughout this project.
+
 ---
 
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+This is a Next.js project bootstrapped with `create-next-app`.
 
 ## Getting Started
 
@@ -192,7 +321,7 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load Geist, a new font family for Vercel.
 
 ## Learn More
 
@@ -205,6 +334,6 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 
 ## Deploy on Vercel
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
