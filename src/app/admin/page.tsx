@@ -1,15 +1,24 @@
 import Link from "next/link";
-import { getTreasuryOverview, listOpenDisputesForAdmin } from "@/lib/admin-data";
+import { getTreasuryOverview, listOpenDisputesForAdmin, getParallelSpendOverview } from "@/lib/admin-data";
 import { explorerTxUrl } from "@/lib/arc";
+import { baseExplorerTxUrl } from "@/lib/base";
 import { formatDate, formatUsdc } from "@/lib/format";
 import { isDemoModeEnabled } from "@/lib/demo/config";
 import ConfirmAction from "@/components/admin/ConfirmAction";
 import InsurancePoolForm from "@/components/admin/InsurancePoolForm";
 
+const LEG_LABELS: Record<string, string> = {
+  onchain_resolve: "On-chain arbiter call",
+  filing_fee_refund: "Filing-fee refund",
+  dispute_contingency_refund: "Dispute-contingency refund",
+  insurance_payout: "Insurance-pool payout",
+};
+
 export default async function AdminTreasuryPage() {
-  const [data, openDisputes] = await Promise.all([
+  const [data, openDisputes, parallelSpend] = await Promise.all([
     getTreasuryOverview(),
     listOpenDisputesForAdmin(),
+    getParallelSpendOverview(),
   ]);
 
   return (
@@ -35,8 +44,9 @@ export default async function AdminTreasuryPage() {
           label="Treasury Gateway balance"
           value={data.gatewayBalance ? `${data.gatewayBalance} USDC` : "—"}
         />
-        <Stat label="Ledger revenue (kept)" value={formatUsdc(data.totalKeptRevenueUsdc)} />
-        <Stat label="Net position" value={formatUsdc(data.netPositionUsdc)} />
+        <Stat label="Ledger revenue (kept, gross)" value={formatUsdc(data.totalKeptRevenueUsdc)} />
+        <Stat label="Insurance payouts (real outflow)" value={`-${formatUsdc(data.insurancePayoutsRealUsdc)}`} />
+        <Stat label="Net position (after insurance payouts)" value={formatUsdc(data.netPositionUsdc)} />
         <Stat
           label="Dispute-insurance pool"
           value={formatUsdc(data.insurancePoolBalanceUsdc)}
@@ -128,27 +138,59 @@ export default async function AdminTreasuryPage() {
             {openDisputes.map((d) => (
               <div
                 key={d.id}
-                className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+                className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
               >
-                <div>
-                  <Link href={`/tasks/${d.task_id}`} className="text-emerald-400 hover:underline">
-                    {d.task_title || d.task_id.slice(0, 8)}
-                  </Link>
-                  <p className="text-xs text-zinc-500">
-                    {d.dispute_kind === "post_approval_contest" ? "Post-approval contest" : "Dispute"}{" "}
-                    · opened by {d.opened_by_email || d.opened_by_wallet.slice(0, 8)} ·{" "}
-                    {formatDate(d.created_at)}
-                  </p>
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <Link href={`/tasks/${d.task_id}`} className="text-emerald-400 hover:underline">
+                      {d.task_title || d.task_id.slice(0, 8)}
+                    </Link>
+                    <p className="text-xs text-zinc-500">
+                      {d.dispute_kind === "post_approval_contest" ? "Post-approval contest" : "Dispute"}{" "}
+                      · opened by {d.opened_by_email || d.opened_by_wallet.slice(0, 8)} ·{" "}
+                      {formatDate(d.created_at)}
+                    </p>
+                  </div>
+                  <span
+                    className={
+                      d.status === "settlement_failed"
+                        ? "rounded-full bg-red-900/40 px-2 py-0.5 text-xs font-medium text-red-300"
+                        : "rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400"
+                    }
+                  >
+                    {d.status === "settlement_failed" ? "settlement failed" : d.status}
+                  </span>
                 </div>
-                <span
-                  className={
-                    d.status === "settlement_failed"
-                      ? "rounded-full bg-red-900/40 px-2 py-0.5 text-xs font-medium text-red-300"
-                      : "rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400"
-                  }
-                >
-                  {d.status === "settlement_failed" ? "settlement failed" : d.status}
-                </span>
+                {d.status === "settlement_failed" && (
+                  <div className="mt-2 space-y-1 border-t border-zinc-800 pt-2">
+                    <p className="text-[11px] text-zinc-500">
+                      Only settlement steps this dispute actually attempted appear below. A step
+                      not listed either doesn&apos;t apply to this dispute, or the sequence
+                      stopped before reaching it.
+                    </p>
+                    {Object.entries(d.settlement_state).map(([leg, state]) => {
+                      const label = LEG_LABELS[leg] ?? leg;
+                      const style =
+                        state.status === "confirmed"
+                          ? "text-emerald-400"
+                          : state.status === "submitted"
+                            ? "text-amber-400"
+                            : "text-red-400";
+                      const summary =
+                        state.status === "confirmed"
+                          ? `completed for real${state.circle_tx_id ? ` (tx ${state.circle_tx_id})` : ""}`
+                          : state.status === "submitted"
+                            ? `submitted, not yet confirmed (attempt ${state.attempt}) — a real transaction may be in flight, do not resubmit`
+                            : `not completed (${state.attempt} attempt${state.attempt === 1 ? "" : "s"} made)`;
+                      return (
+                        <p key={leg} className={`text-xs ${style}`}>
+                          {state.status === "confirmed" ? "✅" : state.status === "submitted" ? "⚠️" : "❌"}{" "}
+                          <span className="font-medium">{label}:</span> {summary}
+                        </p>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -180,6 +222,59 @@ export default async function AdminTreasuryPage() {
                   {p.tx_hash && (
                     <a
                       href={explorerTxUrl(p.tx_hash)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-emerald-400 hover:underline"
+                    >
+                      tx
+                    </a>
+                  )}
+                  <span>{formatDate(p.created_at)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900 p-5">
+        <h2 className="text-sm font-semibold text-zinc-200">
+          Real Parallel spend <span className="font-normal text-zinc-500">— separate wallet, Base mainnet</span>
+        </h2>
+        <p className="text-xs text-zinc-500">
+          A different wallet (<code className="text-zinc-400">parallel_payer</code>) on a different
+          chain (Base mainnet, not Arc Testnet) — not part of Treasury&apos;s balance or revenue
+          figures above. Ledger-derived only; no live on-chain balance check.
+        </p>
+        {parallelSpend.parallelPayerAddress && (
+          <p className="text-xs text-zinc-500">
+            Wallet: <span className="font-mono text-zinc-400">{parallelSpend.parallelPayerAddress}</span>
+          </p>
+        )}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <Stat label="Total real spend to date" value={formatUsdc(parallelSpend.totalRealSpendUsdc)} />
+          <Stat label="Successful payments" value={String(parallelSpend.successfulPaymentsCount)} />
+          <Stat label="Failed (fell back to web_search)" value={String(parallelSpend.failedPaymentsCount)} />
+        </div>
+        {parallelSpend.recentPayments.length === 0 ? (
+          <p className="text-sm text-zinc-500">No Parallel payment attempts yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {parallelSpend.recentPayments.map((p) => (
+              <div key={p.id} className="flex items-center justify-between text-sm">
+                <div>
+                  <span className={p.status === "released" ? "font-mono text-emerald-400" : "font-mono text-red-400"}>
+                    {formatUsdc(p.amount_usdc)}
+                  </span>
+                  {p.task_id && (
+                    <span className="ml-2 text-xs text-zinc-500">task {p.task_id.slice(0, 8)}…</span>
+                  )}
+                  {p.status === "failed" && <span className="ml-2 text-xs text-red-400">failed</span>}
+                </div>
+                <div className="flex items-center gap-3 text-xs text-zinc-500">
+                  {p.tx_hash && (
+                    <a
+                      href={baseExplorerTxUrl(p.tx_hash)}
                       target="_blank"
                       rel="noreferrer"
                       className="text-emerald-400 hover:underline"

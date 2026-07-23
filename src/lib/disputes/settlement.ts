@@ -23,9 +23,9 @@ export type SettlementLeg =
   | "dispute_contingency_refund"
   | "insurance_payout";
 
-type LegStatus = "pending" | "submitted" | "confirmed" | "failed";
+export type LegStatus = "pending" | "submitted" | "confirmed" | "failed";
 
-type LegState = {
+export type LegState = {
   idempotency_key: string;
   circle_tx_id: string | null;
   attempt: number;
