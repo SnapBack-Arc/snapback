@@ -29,7 +29,7 @@ export function statusClasses(status: string): string {
   const s = status.toLowerCase();
   if (["accepted", "resolved", "released", "complete", "completed"].includes(s))
     return "bg-emerald-500/15 text-emerald-400";
-  if (["disputed", "failed", "refunded", "snapped_back", "rejected"].includes(s))
+  if (["disputed", "failed", "refunded", "snapped_back", "rejected", "settlement_failed"].includes(s))
     return "bg-red-500/15 text-red-400";
   if (["pending", "open", "quoted", "assigned", "in_progress", "submitted", "escrowed", "voting"].includes(s))
     return "bg-amber-500/15 text-amber-400";

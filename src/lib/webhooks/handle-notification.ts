@@ -160,8 +160,9 @@ async function handleContractEvent(notification: Record<string, unknown>): Promi
       // On-chain settlement moved funds already — reconcile the escrow
       // payment row the same way Released/SnappedBack do. NOTE: this does
       // NOT touch the `disputes` row (status/outcome) or buyer_dispute_stats
-      // — those are only ever updated by the admin force-resolve route
-      // (lib/disputes/service.ts:resolveDispute), since the real judge pool
+      // — those are only ever updated by resolveDispute() (lib/disputes/
+      // service.ts), called automatically by the real judge panel/tie-break
+      // (lib/disputes/judge-panel.ts), since the real on-chain judge pool
       // has zero staked judges today and nothing else calls
       // SnapBackEscrow.resolveDispute yet. See README's "Event-driven state"
       // section for the known reconciliation gap this leaves.

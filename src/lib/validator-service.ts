@@ -19,10 +19,9 @@ import { runJudgePanel } from "@/lib/disputes/judge-panel";
  *   pass → auto-approve (release escrow to the seller)
  *   fail → auto-file a dispute (freezes escrow), then runs the real AI judge
  *          panel synchronously (see lib/disputes/judge-panel.ts) — this call
- *          resolves the dispute itself in the common case.
- *
- * No human is involved unless the judge panel can't reach a clean result
- * (see judge-panel.ts), in which case it falls through to admin force-resolve.
+ *          resolves the dispute itself, automatically, every time: a clean
+ *          tier-1/tier-2 vote or the deterministic tie-break if neither
+ *          reaches a majority. No human is involved at any point.
  */
 export async function runValidation(taskId: string, deliverable: unknown) {
   const supabase = createServiceSupabase();
@@ -255,13 +254,12 @@ export async function runValidation(taskId: string, deliverable: unknown) {
         // Leave educational_feedback null rather than fail the validation run.
       }
 
-      // Real AI judge panel -- the default resolution path (replaces admin
-      // force-resolve). Runs synchronously, same as every other step in this
-      // function -- there's no keeper/queue in this app. Left to throw: a
-      // failure here should surface, not be silently swallowed like the
-      // feedback generation above, since resolving the dispute (or cleanly
-      // leaving it for admin review) is the point of this call, not a
-      // value-add on top of it.
+      // Real AI judge panel -- the sole resolution path, no admin fallback.
+      // Runs synchronously, same as every other step in this function --
+      // there's no keeper/queue in this app. Left to throw: a failure here
+      // should surface, not be silently swallowed like the feedback
+      // generation above, since resolving the dispute is the point of this
+      // call, not a value-add on top of it.
       await runJudgePanel(disputeRow.id);
     }
   }

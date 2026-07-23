@@ -5,7 +5,6 @@ import { explorerTxUrl } from "@/lib/arc";
 import { formatDate, formatUsdc, statusClasses } from "@/lib/format";
 import { contingentDisclosureLine } from "@/lib/estimator/fees";
 import ConfirmAction from "@/components/admin/ConfirmAction";
-import DisputeResolveActions from "@/components/admin/DisputeResolveActions";
 import FlagUserForm from "@/components/admin/FlagUserForm";
 
 const UNRESOLVED_TASK_STATUSES = new Set(["draft", "open", "quoted", "assigned", "in_progress", "submitted", "disputed"]);
@@ -230,7 +229,7 @@ export default async function AdminUserDetailPage({
                     task {d.task_id.slice(0, 8)}…
                   </Link>
                   <span className={`rounded-full px-2 py-0.5 text-xs ${statusClasses(d.status)}`}>
-                    {d.status}
+                    {d.status === "settlement_failed" ? "settlement failed" : d.status}
                   </span>
                   <span className="text-zinc-400">outcome: {d.outcome}</span>
                   {d.dispute_kind === "post_approval_contest" && (
@@ -239,9 +238,6 @@ export default async function AdminUserDetailPage({
                     </span>
                   )}
                 </div>
-                {(d.status === "open" || d.status === "voting") && (
-                  <DisputeResolveActions disputeId={d.id} />
-                )}
               </div>
               {d.reason && <p className="mt-1 text-xs text-zinc-500">{d.reason}</p>}
               {d.filing_fee_usdc !== null && (

@@ -6,10 +6,9 @@ import { resolveDispute } from "@/lib/disputes/service";
 import type { VoteChoice } from "@/lib/supabase/types";
 
 /**
- * Real AI judge panel -- the default dispute-resolution path. Replaces admin
- * force-resolve as the expected outcome for a dispute; force-resolve remains
- * only as an emergency manual override (see DisputeResolveActions.tsx) for
- * whatever this panel can't cleanly resolve.
+ * Real AI judge panel -- the sole dispute-resolution path. There is no admin
+ * manual-override route anymore: every dispute resolves automatically,
+ * either by tier-1/tier-2 vote or by the deterministic tie-break below.
  *
  * Tier 1 (first attempt, every dispute): 2x claude-opus-4-8 + 1x
  * claude-sonnet-5, fully independent (no judge sees another's vote),
@@ -23,14 +22,23 @@ import type { VoteChoice } from "@/lib/supabase/types";
  * unanimous, so the dispute can actually resolve. A failed slot is retried
  * once; if it still fails it's recorded as `abstain` and majority is
  * evaluated over whatever real votes exist. If that's not a clean >=3
- * agreement (e.g. a 2-2 tie after a permanent failure), this deliberately
- * does NOT force a resolution -- the dispute stays `voting` and falls
- * through to admin force-resolve.
+ * agreement (e.g. a 2-2 tie after a permanent failure), a deterministic
+ * tie-break decides instead of leaving the dispute stuck: `standard`
+ * disputes favor the buyer (the seller hadn't met its burden of proof),
+ * `post_approval_contest`s favor the seller (the buyer hadn't met theirs) --
+ * see the tie-break call at the end of runJudgePanel below.
  *
  * Both tiers' votes are persisted as real `judge_votes` rows on the same
  * dispute (up to 8 total on an escalated dispute) -- see
  * supabase/migrations/0016_judge_panel.sql for why that requires 8 distinct
  * fixed judge identities, not 5.
+ *
+ * resolveDispute (lib/disputes/service.ts) is the actual settlement --
+ * every real money-moving step it runs is retry-safe (see
+ * lib/disputes/settlement.ts). If those retries are exhausted, the dispute
+ * lands in `settlement_failed`, not `voting` -- a genuine infra failure
+ * (Circle API / chain), surfaced passively on /admin, not something this
+ * function retries itself.
  */
 
 type Effort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -308,6 +316,10 @@ export async function runJudgePanel(disputeId: string): Promise<void> {
   }
 
   // No genuine, unambiguous majority even after retry (e.g. a 2-2 tie after
-  // a permanently-failed slot) -- do not force a resolution. Dispute stays
-  // "voting"; admin force-resolve is the fallback.
+  // a permanently-failed slot). Deterministic tie-break, not left for a
+  // human: the seller was claiming their delivery/payout was earned, so an
+  // inconclusive panel hasn't met that burden -- standard disputes favor the
+  // buyer. A post-approval contest inverts the claim (the buyer is claiming
+  // a refund on work already paid out), so it favors the seller instead.
+  await resolveDispute(disputeId, isContest ? "favor_payee" : "favor_payer");
 }

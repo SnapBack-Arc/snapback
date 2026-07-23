@@ -66,12 +66,17 @@ do $$ begin
 exception when duplicate_object then null; end $$;
 
 -- The dispute-insurance pool is a LOGICAL sub-balance of the Treasury wallet,
--- not a separate on-chain wallet — post_approval_contest payouts already
--- settle from Treasury (payments.kind = 'insurance_payout', see
--- lib/disputes/service.ts:settleContestWin). This table only tracks admin
--- top-up/withdraw adjustments; the displayed balance is computed as
--- SUM(top_up) - SUM(withdraw) - SUM(insurance_payout payments), see
--- lib/admin-data.ts.
+-- not a separate on-chain wallet. This table only tracks admin top-up/
+-- withdraw adjustments; the displayed balance is computed as SUM(top_up) -
+-- SUM(withdraw) - SUM(insurance_payout payments), see lib/admin-data.ts.
+--
+-- CORRECTION (see 20260723070953_settlement_retry_state.sql): at the time
+-- this migration was written, post_approval_contest payouts
+-- (payments.kind = 'insurance_payout', lib/disputes/service.ts:settleContestWin)
+-- were ledger-only — no real Treasury -> buyer transfer ever happened,
+-- despite this comment's original claim otherwise. Fixed later the same
+-- session that added settlement_state: settleContestWin now performs a
+-- real, retry-safe Circle transfer before that payments row is inserted.
 create table if not exists insurance_pool_adjustments (
   id              uuid primary key default gen_random_uuid(),
   direction       insurance_pool_direction not null,

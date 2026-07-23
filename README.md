@@ -108,20 +108,61 @@ standard validator-filed dispute and a buyer-filed post-approval contest:**
 Both tiers' votes persist as real `judge_votes` rows on the same dispute (up
 to 8 total on an escalated dispute — see `supabase/migrations/0016_judge_panel.sql`).
 
-**Admin force-resolve is the true fallback, not the primary path.** Only if
-tier 2 also fails to reach a clean ≥3 majority (e.g. a 2–2 tie after a
-permanent slot failure) does a dispute stay `voting` and require a manual
-admin verdict (`DisputeResolveActions.tsx`, `POST /api/disputes/[id]/resolve`).
-When it is used, it's a real on-chain call, not just a DB update:
-`SnapBackEscrow.resolveDispute` is `onlyArbiter`, and `arbiter` is now a
+**No admin fallback — a deterministic tie-break resolves every remaining
+case automatically.** If tier 2 also fails to reach a clean ≥3 majority
+(e.g. a 2–2 tie after a permanent slot failure, or all 5 calls failing
+outright), `runJudgePanel` decides instead of leaving the dispute stuck in
+`voting`: a `standard` dispute favors the **buyer** (the seller was claiming
+their delivery earned payment; an inconclusive panel hasn't met that
+burden), a `post_approval_contest` favors the **seller** (the buyer was
+claiming a refund on work already paid out; same burden-of-proof logic,
+opposite direction). There is no admin manual-override route anymore —
+every dispute resolves automatically, no exceptions, no human in the loop.
+
+Whichever way a dispute resolves — tier-1 unanimous, tier-2 majority, or the
+tie-break — settlement goes through `resolveDispute` (`src/lib/disputes/
+service.ts`), which for a `standard` dispute makes a real on-chain call:
+`SnapBackEscrow.resolveDispute` is `onlyArbiter`, and `arbiter` is a
 Circle-managed app wallet (`contracts/script/SetArbiterToAppWallet.s.sol`,
 `scripts/provision-arbiter-wallet.ts`, `lib/app-wallets.ts`'s
-`ensureArbiterWallet`) that the admin route signs
+`ensureArbiterWallet`) that `resolveDispute` signs
 `resolveDispute(jobId, favorBuyer, reason)` with directly (`lib/escrow.ts`'s
 `resolveJobDispute`) before touching any off-chain row. This on-chain call
 only applies to `standard` disputes — a `post_approval_contest` never froze
 anything on-chain (the seller was already auto-paid), so a buyer win there
-settles from Treasury's insurance pool instead.
+settles from Treasury's insurance pool instead. Every real money-moving step
+here — the on-chain call, the filing-fee refund, the dispute-contingency
+refund, and the insurance-pool payout — runs through a shared retry-safe
+helper (`src/lib/disputes/settlement.ts:runSettlementLeg`); see "Settlement
+retry-safety" below.
+
+### Settlement retry-safety
+
+Every real money-moving call during dispute resolution (the on-chain
+arbiter call, the filing-fee refund, the dispute-contingency refund, and
+the insurance-pool payout) is a Circle `createContractExecutionTransaction`
+call, which has a real ambiguous-failure mode: if the request reaches Circle
+and a transaction is genuinely created, but the response is lost before this
+app reads it (timeout, connection reset), the call throws with **no local
+record that anything was submitted**. Circle supports exactly this case via
+a caller-supplied `idempotencyKey` — reusing the same key on a retry
+"is treated as the same request and the original response will be
+returned" — but nothing in this app passed one before this fix, so a naive
+retry risked a second real submission.
+
+`runSettlementLeg` (`src/lib/disputes/settlement.ts`) fixes this: before the
+first attempt of a settlement leg, it generates a UUID and persists it to
+`disputes.settlement_state.<leg>` **before** submitting, and persists the
+returned Circle transaction id **before** waiting for confirmation. A retry
+after any failure resumes rather than blind-resubmits — no tx id yet, retry
+submits with the *same* idempotency key; a tx id exists, retry re-polls the
+*same* tx id unless it's confirmed genuinely dead (reverted/denied/
+cancelled/stuck), in which case the tx id is abandoned and a fresh
+idempotency key is generated for the next attempt. Bounded at 3 attempts
+with backoff; if none succeed, the dispute is marked `settlement_failed` —
+not left in `voting` — a distinct status meaning a genuine Circle/chain
+infra failure needs a human to check state directly, surfaced passively (no
+action button) in the "Disputes in progress" panel on `/admin`.
 
 **`JudgeRegistry.sol` is a separate, dormant on-chain contract — not the
 system described above.** Its `selectPanel()` is `onlyOwner`, gated by a
@@ -267,12 +308,6 @@ something to re-run per preview.
   contest path is needed — see `src/lib/disputes/contest.ts`'s docblock for
   why that asymmetry only exists on the buyer/auto-approve side). Noted as a
   future improvement, not built yet.
-- **Insurance payout on a contest win is ledger-only.** `settleContestWin`
-  (`src/lib/disputes/service.ts`) inserts a `payments` row (`kind:
-  "insurance_payout"`, `status: "released"`) for the amount owed to a
-  contest-winning buyer, but never actually calls `transferUsdc` — no real
-  Circle transfer happens, unlike the filing-fee refund next to it in the
-  same resolution flow, which does. Confirmed bug, unfixed.
 - **The admin dashboard's treasury discrepancy note is now stale, and its
   kept-revenue total undercounts.** `getTreasuryOverview`
   (`src/lib/admin-data.ts`) still surfaces a `discrepancyNote` claiming no
@@ -282,11 +317,27 @@ something to re-run per preview.
   validation fee entirely and any settled/forfeited dispute-contingency
   holdback — both are real kept revenue with no corresponding line in
   `revenueLines` or the total.
-- **The judge panel's tier-2 fallback has no staleness alert.** A dispute
-  stuck in `voting` after tier 2 fails to reach majority is invisible until
-  an admin manually opens `/admin` — `listOpenDisputesForAdmin`
-  (`src/lib/admin-data.ts`) is a plain worklist query, not a proactive
-  notification of any kind.
+- **`settlement_failed` disputes have no staleness alert.** A dispute that
+  exhausts `runSettlementLeg`'s bounded retries (genuine Circle/chain infra
+  failure, not a judgment call — see "Settlement retry-safety" above) is
+  invisible until an admin manually opens `/admin` —
+  `listOpenDisputesForAdmin` (`src/lib/admin-data.ts`) is a plain worklist
+  query, not a proactive notification of any kind. Same underlying gap the
+  old tier-2-fallback note used to describe here, now against a narrower,
+  rarer trigger since the deterministic tie-break resolves every ordinary
+  no-majority case automatically.
+- **The sweep-path dispute-contingency refund still isn't retry-safe.**
+  `sweepUncontestedContingencies`'s clean-completion refund (a task that
+  auto-approved with no contest ever filed) calls the older
+  `refundOrReleaseHeldPayment` (`src/lib/disputes/service.ts`) — no
+  idempotency key, no persisted tx id, same ambiguous-failure risk every
+  other real transfer in this app used to have. Every dispute-triggered
+  refund (filing fee, contingency-on-a-resolved-dispute, insurance payout)
+  now goes through the retry-safe `runSettlementLeg` path instead, keyed on
+  `disputes.settlement_state` — but this one has no dispute row to key
+  retry state against (a clean completion never opens a dispute), so it's
+  structurally harder to fix without a different state-storage approach.
+  Disclosed, not silently inconsistent with the rest of this section.
 - **Genuine buyer wins are hard to reach organically through the real
   contest path.** The judge panel's system prompt holds that "the seller is
   accountable ONLY for what their SLA actually promised" — combined with the

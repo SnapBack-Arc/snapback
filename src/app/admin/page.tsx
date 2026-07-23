@@ -5,7 +5,6 @@ import { formatDate, formatUsdc } from "@/lib/format";
 import { isDemoModeEnabled } from "@/lib/demo/config";
 import ConfirmAction from "@/components/admin/ConfirmAction";
 import InsurancePoolForm from "@/components/admin/InsurancePoolForm";
-import DisputeResolveActions from "@/components/admin/DisputeResolveActions";
 
 export default async function AdminTreasuryPage() {
   const [data, openDisputes] = await Promise.all([
@@ -113,10 +112,17 @@ export default async function AdminTreasuryPage() {
 
       <section className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900 p-5">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-zinc-200">Disputes awaiting resolution</h2>
+          <h2 className="text-sm font-semibold text-zinc-200">Disputes in progress</h2>
         </div>
+        <p className="text-xs text-zinc-500">
+          Passive visibility only — every dispute now resolves automatically (the real judge
+          panel, or its deterministic tie-break) with no admin action to take here.{" "}
+          <span className="text-amber-400">Settlement failed</span> is the one exception: a
+          genuine Circle/chain infra failure after an outcome was already decided, not a normal
+          in-progress dispute — see the README&apos;s Known limitations.
+        </p>
         {openDisputes.length === 0 ? (
-          <p className="text-sm text-zinc-500">Nothing open right now.</p>
+          <p className="text-sm text-zinc-500">Nothing in progress right now.</p>
         ) : (
           <div className="space-y-2">
             {openDisputes.map((d) => (
@@ -134,7 +140,15 @@ export default async function AdminTreasuryPage() {
                     {formatDate(d.created_at)}
                   </p>
                 </div>
-                <DisputeResolveActions disputeId={d.id} />
+                <span
+                  className={
+                    d.status === "settlement_failed"
+                      ? "rounded-full bg-red-900/40 px-2 py-0.5 text-xs font-medium text-red-300"
+                      : "rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400"
+                  }
+                >
+                  {d.status === "settlement_failed" ? "settlement failed" : d.status}
+                </span>
               </div>
             ))}
           </div>

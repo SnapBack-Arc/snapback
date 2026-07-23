@@ -410,13 +410,20 @@ export type OpenDisputeRow = {
   created_at: string;
 };
 
-/** Disputes with no verdict yet — the admin "force-resolve" action's worklist. */
+/**
+ * Disputes still in progress or stuck — passive visibility only, not an
+ * action worklist. Every dispute now resolves automatically (the real judge
+ * panel, or its deterministic tie-break — lib/disputes/judge-panel.ts); there
+ * is no admin action left to take here. `settlement_failed` disputes are the
+ * one exception worth an admin's attention: a genuine Circle/chain infra
+ * failure after an outcome was already decided (see lib/disputes/settlement.ts).
+ */
 export async function listOpenDisputesForAdmin(): Promise<OpenDisputeRow[]> {
   const supabase = createServiceSupabase();
   const { data } = await supabase
     .from("disputes")
     .select("*, tasks(title), wallets!disputes_opened_by_wallet_fkey(address, users(email))")
-    .in("status", ["open", "voting"])
+    .in("status", ["open", "voting", "settlement_failed"])
     .order("created_at", { ascending: true });
 
   return (data ?? []).map((d) => {

@@ -223,8 +223,8 @@ function EventBody({ event }: { event: TimelineEvent }) {
           </p>
           <p className="mt-1 text-xs text-zinc-500">
             {event.forcedByAdmin
-              ? "Resolved by admin force-resolve — no judge panel voted."
-              : "Resolved from the judge panel's majority vote."}
+              ? "Resolved by admin force-resolve (historical — this action no longer exists)."
+              : "Resolved by the judge panel — a majority vote, or its deterministic tie-break if no majority was reached."}
           </p>
           {event.settlements.length > 0 && (
             <div className="mt-2 space-y-1 rounded-lg border border-zinc-800 bg-zinc-950 p-2">

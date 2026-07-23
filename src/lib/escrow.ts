@@ -72,6 +72,29 @@ export async function waitForTxHash(circleTxId: string): Promise<Hash> {
 }
 
 /**
+ * Terminal Circle transaction states that mean the transaction is genuinely
+ * dead (reverted, denied, cancelled, or stuck) — as opposed to still pending
+ * or a transient polling error. Used to classify a waitForTxHash throw: a
+ * terminal-failure state means that circleTxId is safe to abandon (nothing
+ * succeeded, a retry needs a fresh submission); anything else means the
+ * underlying transaction may still be live (a retry should keep polling the
+ * SAME circleTxId, never resubmit).
+ */
+const TERMINAL_FAILURE_STATES = new Set(["CANCELLED", "DENIED", "FAILED", "STUCK"]);
+
+/** Non-polling read of a Circle transaction's current state — used only to
+ *  classify a waitForTxHash failure, never to wait for one. */
+export async function getTxState(circleTxId: string): Promise<string | undefined> {
+  const client = getDeveloperControlledWalletsClient();
+  const res = await client.getTransaction({ id: circleTxId });
+  return res.data?.transaction?.state;
+}
+
+export function isTerminalFailureState(state: string | undefined): boolean {
+  return state !== undefined && TERMINAL_FAILURE_STATES.has(state);
+}
+
+/**
  * Recovers the on-chain jobId from a `createJob` transaction's receipt.
  * SnapBackEscrow.createJob assigns jobs a sequential counter and only
  * exposes the new id via the `JobCreated` event — there is no return-value
@@ -289,20 +312,27 @@ export async function escrowAction(
 }
 
 /**
- * Arbiter settles a disputed job on-chain — the priority-fix counterpart to
- * `escrowAction`'s buyer-gated calls. `resolveDispute` is `onlyArbiter`
- * (SnapBackEscrow.sol), and `arbiter` is now the app's Circle-managed
- * `arbiter` app_wallet (see lib/app-wallets.ts's ensureArbiterWallet and
- * contracts/script/SetArbiterToAppWallet.s.sol — arbiter used to be
- * JudgeRegistry, which nothing calls, so every force-resolve previously
- * only updated the off-chain `disputes` row while the on-chain job stayed
+ * Arbiter settles a disputed job on-chain — called by the real judge panel
+ * (lib/disputes/judge-panel.ts) or its deterministic tie-break, the only
+ * resolution paths left now that admin force-resolve has been removed.
+ * `resolveDispute` is `onlyArbiter` (SnapBackEscrow.sol), and `arbiter` is
+ * the app's Circle-managed `arbiter` app_wallet (see lib/app-wallets.ts's
+ * ensureArbiterWallet and contracts/script/SetArbiterToAppWallet.s.sol —
+ * arbiter used to be JudgeRegistry, which nothing calls, so this call used
+ * to only update the off-chain `disputes` row while the on-chain job stayed
  * frozen forever).
+ *
+ * Accepts an optional idempotencyKey — see lib/disputes/settlement.ts:
+ * runSettlementLeg, which generates and persists one before the first
+ * attempt and reuses it across retries so a lost response never risks a
+ * second real on-chain call.
  */
 export async function resolveJobDispute(
   arbiterCircleWalletId: string,
   jobId: string,
   favorBuyer: boolean,
   reason: string,
+  idempotencyKey?: string,
 ): Promise<string | undefined> {
   const client = getDeveloperControlledWalletsClient();
   const res = await client.createContractExecutionTransaction({
@@ -311,6 +341,7 @@ export async function resolveJobDispute(
     abiFunctionSignature: SIG.resolveDispute,
     abiParameters: [jobId, favorBuyer, reason],
     fee: FEE,
+    ...(idempotencyKey ? { idempotencyKey } : {}),
   });
   return res.data?.id;
 }
@@ -319,14 +350,21 @@ export async function resolveJobDispute(
  * Priority fix (Phase 4): a plain ERC-20 transfer, direct wallet-to-wallet,
  * with no escrow contract in the loop at all. Used to actually collect the
  * happy-path/validation fees and the dispute contingency at task-funding
- * time (buyer -> Treasury), and to actually refund the contingency later
- * (Treasury -> buyer) — both real on-chain transfers where previously these
- * amounts only ever existed as `payments` rows with no matching transfer.
+ * time (buyer -> Treasury), and to actually refund the contingency, filing
+ * fee, or insurance-pool payout later (Treasury -> buyer) — real on-chain
+ * transfers where previously several of these amounts only ever existed as
+ * `payments` rows with no matching transfer.
+ *
+ * Accepts an optional idempotencyKey — see lib/disputes/settlement.ts:
+ * runSettlementLeg, which generates and persists one before the first
+ * attempt and reuses it across retries so a lost response never risks a
+ * second real transfer.
  */
 export async function transferUsdc(
   fromCircleWalletId: string,
   toAddress: Address,
   amountUsdc: string,
+  idempotencyKey?: string,
 ): Promise<string | undefined> {
   const client = getDeveloperControlledWalletsClient();
   const res = await client.createContractExecutionTransaction({
@@ -335,6 +373,7 @@ export async function transferUsdc(
     abiFunctionSignature: SIG.transfer,
     abiParameters: [toAddress, parseUnits(amountUsdc, USDC_DECIMALS).toString()],
     fee: FEE,
+    ...(idempotencyKey ? { idempotencyKey } : {}),
   });
   return res.data?.id;
 }

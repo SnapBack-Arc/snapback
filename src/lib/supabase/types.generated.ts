@@ -141,6 +141,7 @@ export type Database = {
           outcome: Database["public"]["Enums"]["dispute_outcome"]
           reason: string | null
           resolved_at: string | null
+          settlement_state: Json
           status: Database["public"]["Enums"]["dispute_status"]
           task_id: string
           updated_at: string
@@ -160,6 +161,7 @@ export type Database = {
           outcome?: Database["public"]["Enums"]["dispute_outcome"]
           reason?: string | null
           resolved_at?: string | null
+          settlement_state?: Json
           status?: Database["public"]["Enums"]["dispute_status"]
           task_id: string
           updated_at?: string
@@ -179,6 +181,7 @@ export type Database = {
           outcome?: Database["public"]["Enums"]["dispute_outcome"]
           reason?: string | null
           resolved_at?: string | null
+          settlement_state?: Json
           status?: Database["public"]["Enums"]["dispute_status"]
           task_id?: string
           updated_at?: string
@@ -1073,7 +1076,12 @@ export type Database = {
       app_wallet_role: "delegate" | "treasury" | "arbiter" | "parallel_payer"
       dispute_kind: "standard" | "post_approval_contest"
       dispute_outcome: "pending" | "favor_payer" | "favor_payee" | "split"
-      dispute_status: "open" | "voting" | "resolved" | "rejected"
+      dispute_status:
+        | "open"
+        | "voting"
+        | "resolved"
+        | "rejected"
+        | "settlement_failed"
       estimator_gate_result:
         | "original"
         | "retry_free"
@@ -1268,7 +1276,13 @@ export const Constants = {
       app_wallet_role: ["delegate", "treasury", "arbiter", "parallel_payer"],
       dispute_kind: ["standard", "post_approval_contest"],
       dispute_outcome: ["pending", "favor_payer", "favor_payee", "split"],
-      dispute_status: ["open", "voting", "resolved", "rejected"],
+      dispute_status: [
+        "open",
+        "voting",
+        "resolved",
+        "rejected",
+        "settlement_failed",
+      ],
       estimator_gate_result: [
         "original",
         "retry_free",

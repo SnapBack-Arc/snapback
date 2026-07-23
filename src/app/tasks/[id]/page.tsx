@@ -278,8 +278,9 @@ const NO_DECISIVE_REASON_FALLBACK =
  * computes), takes the first vote whose choice matches the final outcome,
  * and extracts just its first sentence. Falls back to a generic line rather
  * than crashing if no votes exist yet, or if none of the decisive tier's
- * votes happen to match the outcome (e.g. an admin force-resolve that
- * overrode what the panel actually voted).
+ * votes happen to match the outcome — expected for the deterministic
+ * tie-break case (lib/disputes/judge-panel.ts): by definition no real
+ * majority favored that outcome, that's exactly why the tie-break fired.
  */
 function condenseJudgeReason(outcome: "favor_payer" | "favor_payee", votes: JudgeVoteRow[]): string {
   const hasTierData = votes.some((v) => v.tier !== null);
