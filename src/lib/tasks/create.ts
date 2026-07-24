@@ -85,8 +85,10 @@ export async function createAndFundTask(
   // amount (see research-sourcing-pricing.ts) driven by this task's own
   // difficulty/scope_quantity, not the listing's static seed price — a
   // small, easy request and a large, complex one genuinely cost different
-  // amounts to actually run. Every other listing is simulated inventory
-  // with no execution behind it, so its static price_usdc is used as-is.
+  // amounts to actually run. The isResearchSourcingListing check below is
+  // still a real branch (not dead code) even though it's the only listing
+  // today — a future non-real listing would fall through to its static
+  // price_usdc as-is.
   let priceUsdc = Number(listing.price_usdc);
   if (isResearchSourcingListing(listing.sla)) {
     const { data: session } = await supabase

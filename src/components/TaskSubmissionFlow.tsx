@@ -133,10 +133,10 @@ export default function TaskSubmissionFlow({
       // Only ever auto-select the one real worker agent (Research &
       // Sourcing). matched_listing_ids is now always a genuine category
       // match (an exact filter, not a keyword guess — see
-      // lib/estimator/marketplace.ts), so the only remaining check is
-      // whether the match happens to be the one listing with a real worker
-      // behind it. See "Choose a seller" below: every other listing is
-      // simulated inventory and is never offered as a candidate here.
+      // lib/estimator/marketplace.ts) against the one live category, so in
+      // practice this always matches — the isResearchSourcingListing check
+      // is still a real guard, not dead code, for if a non-real listing is
+      // ever added to this category.
       const matched = result.session.matched_listing_ids
         .map((id) => activeListings.find((l) => l.id === id))
         .find((l): l is ListingRow => Boolean(l));
@@ -328,11 +328,10 @@ export default function TaskSubmissionFlow({
           {listings && listings.length === 0 && (
             <p className="text-sm text-zinc-500">No active listings available right now.</p>
           )}
-          {/* This demo runs exactly one real worker agent (Research & Sourcing).
-              Every other seed listing is simulated inventory with no execution
-              behind it — nothing here should ever read as a real competing
-              quote unless it genuinely is one. See README.md "Simulated vs.
-              real sellers". */}
+          {/* SnapBack runs exactly one real worker agent (Research & Sourcing)
+              — nothing here should ever read as a real competing quote unless
+              it genuinely is one. See README.md "Research & Sourcing — the
+              one real integration". */}
           {listings && isRealMatch && matchedListing && realPriceUsdc !== null && (
             <div className="space-y-2">
               <button

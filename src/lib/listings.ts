@@ -13,11 +13,3 @@ export async function getActiveListings(): Promise<ListingRow[]> {
   if (error) throw new Error(`Failed to load listings: ${error.message}`);
   return data ?? [];
 }
-
-export async function getListingsByIds(ids: string[]): Promise<ListingRow[]> {
-  if (ids.length === 0) return [];
-  const supabase = createServiceSupabase();
-  const { data, error } = await supabase.from("listings").select("*").in("id", ids);
-  if (error) throw new Error(`Failed to load listings: ${error.message}`);
-  return data ?? [];
-}

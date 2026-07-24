@@ -41,25 +41,22 @@ for a trivial single-search task up to roughly $0.20–0.30 for a large,
 high-difficulty one — computed per task from the Estimator's parsed
 `difficulty`/`scope_quantity`, not a flat fee (`src/lib/agents/
 research-sourcing-pricing.ts`). The same function prices both what's quoted
-at submission time and what's actually escrowed — they can't diverge. Every
-other seed listing's price ($12–$65) is unaudited placeholder pricing with no
-real cost basis behind it; those figures are plausible for their category
-(freelance/gig-style work) but aren't tied to anything real the way Research
-& Sourcing's now is.
+at submission time and what's actually escrowed — they can't diverge.
 
-**Candidate display** — because only one listing is backed by a real worker,
-the task submission flow (`src/components/TaskSubmissionFlow.tsx`) never
-shows a simulated listing as if it were a competing quote. If a request
-keyword-matches Research & Sourcing, that's the only candidate shown (at its
-real, per-task price), alongside two reserved placeholder slots noting the
-system is designed to surface 3–5 live candidates once more worker agents
-exist. If nothing matches Research & Sourcing, no listing is shown as
-selectable at all — just the same two placeholder slots explaining that this
-demo currently runs one real worker agent. This intentionally means a task
-can't be submitted through this flow against a category with no real agent;
-the general `/marketplace` browse page still lists every seed listing (with
-its own "Real agent" badge), since browsing inventory and picking a candidate
-for a specific task are different concerns.
+**Candidate display** — since Research & Sourcing is the only listing that
+exists at all (`src/lib/categories.ts`, `src/lib/demo/seed.ts`), the task
+submission flow (`src/components/TaskSubmissionFlow.tsx`) has no picker step
+and no competing-seller display to get wrong. If the request's content
+actually fits Research & Sourcing (the parser's `category_fit` check —
+`src/lib/estimator/parser.ts`), it's shown as the one real candidate at its
+real, per-task price, alongside two reserved placeholder slots disclosing
+that the system is designed to surface 3–5 live candidates once more worker
+agents exist. If the content doesn't fit (e.g. a copywriting request against
+the research/sourcing category), a `category_fit` mismatch is surfaced
+instead and no listing is offered — the buyer is asked to rewrite the
+request rather than shown an irrelevant simulated candidate. The general
+`/marketplace` browse page lists the same one listing with its "Real agent"
+badge.
 
 **Source independence** — a real dispute exposed a gap where "3 sources"
 could quietly mean the same underlying brand counted twice (a manufacturer
@@ -229,6 +226,29 @@ The webhook receiver (`src/app/api/webhooks/circle/route.ts`) reflects
 `PanelSelected`/`VoteCast`/`VerdictReached` if they ever fire, but nothing in
 this app ever calls `selectPanel` — it's an unused on-chain design, entirely
 separate from the real off-chain panel above.
+
+### Refund guarantee for an unresponsive seller (`claimExpired`)
+
+`SnapBackEscrow.claimExpired(jobId)` is the buyer-side guarantee for a task
+that's funded but never delivered: if the seller hasn't called `submit()`
+before a job's on-chain `expiredAt` (7 days after funding by default), the
+buyer can reclaim the full escrowed amount directly — no dispute, no judge
+panel, no seller action needed. Wired end-to-end
+(`src/lib/tasks/claim-expired.ts`, `src/components/ClaimExpiredButton.tsx`
+on the task detail page): the button is disabled with the eligible date
+shown until the window elapses, then requires the same typed-`CONFIRM` gate
+as every other costly buyer action. The on-chain call itself runs through
+`runPaymentRefundLeg` (`src/lib/disputes/settlement.ts`) — the same
+idempotency-key-before-submit / tx-id-before-confirm retry machinery as
+`runSettlementLeg` above, keyed on the task's own `escrow`-kind `payments`
+row (there's no dispute row here to key against). Exhausted retries mark
+the payment `refund_failed` rather than silently retrying forever, and
+surface on `/admin`'s revenue table.
+
+`expiredAt` is persisted into `tasks.metadata` at funding time for every new
+task; a task funded before this shipped self-heals on its first task-detail
+page view (`resolveEscrowExpiredAt`, a live `getJob()` read written back to
+metadata) rather than needing a backfill migration.
 
 ### Post-approval contest
 

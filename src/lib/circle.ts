@@ -18,7 +18,10 @@ import { requireServerEnv } from "@/lib/env";
  *   contracts for event-driven state (lib/webhooks/*). Confirmed to support
  *   ARC-TESTNET (`Blockchain.ArcTestnet` in the published SDK types) since
  *   Circle's 2025-11-25 release note "Expanded Contracts support to include
- *   the Arc testnet."
+ *   the Arc testnet." getSmartContractPlatformClient below is currently
+ *   unused — scripts/circle-webhooks-setup.ts instantiates its own separate
+ *   client rather than importing this one; kept as the documented entry
+ *   point if that script's setup ever moves in-app.
  *
  * getLiveDeveloperControlledWalletsClient is a separate client authenticated
  * against CIRCLE_LIVE_API_KEY/CIRCLE_LIVE_ENTITY_SECRET (Circle's production

@@ -11,17 +11,13 @@ const RESEARCH_SOURCING_AGENT_MARKER = "research-sourcing";
 /**
  * POST /api/tasks/[id]/deliver
  *
- * Triggers the ONE real, non-simulated worker agent (Research & Sourcing —
- * see lib/agents/research-sourcing.ts and README.md "Simulated vs. real
- * sellers") to actually execute a task and submit its deliverable. This is
- * the only place that's special-cased to this one listing — once the
- * deliverable exists, it goes through runValidation() exactly like any
- * other seller's submission would, no special-casing there.
- *
- * Every other seed listing has no execution behind it at all; there is no
- * equivalent "deliver" trigger for them, by design — they're placeholder
- * inventory demonstrating the payment/escrow/dispute infrastructure, not
- * simulated workers.
+ * Triggers SnapBack's one real, non-simulated worker agent (Research &
+ * Sourcing — see lib/agents/research-sourcing.ts and README.md "Research &
+ * Sourcing — the one real integration") to actually execute a task and
+ * submit its deliverable. This is the only place that's special-cased to
+ * this listing — once the deliverable exists, it goes through
+ * runValidation() exactly like any other seller's submission would, no
+ * special-casing there.
  */
 export async function POST(
   request: Request,
