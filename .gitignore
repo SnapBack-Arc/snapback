@@ -32,6 +32,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...except the template itself — no secrets, safe and meant to be tracked
+# so a fresh clone has onboarding guidance (see its own header comment).
+!.env.example
 
 # vercel
 .vercel
