@@ -143,7 +143,15 @@ export async function createAndFundTask(
   await supabase
     .from("tasks")
     .update({
-      metadata: { ...((task.metadata as Record<string, unknown>) ?? {}), erc8183_job_id: jobId },
+      metadata: {
+        ...((task.metadata as Record<string, unknown>) ?? {}),
+        erc8183_job_id: jobId,
+        // Free — already computed above for the createJob call itself. Lets
+        // the task detail page show "refund available after [date]" and gate
+        // the claimExpired button without a live on-chain read on every
+        // load (lib/tasks/claim-expired.ts, getJobExpiredAt fallback).
+        escrow_expired_at: expiredAt,
+      },
     })
     .eq("id", task.id);
 

@@ -148,6 +148,11 @@ async function handleContractEvent(notification: Record<string, unknown>): Promi
         .eq("task_id", task.id)
         .eq("kind", "escrow")
         .eq("status", "escrowed");
+      await supabase
+        .from("tasks")
+        .update({ status: "cancelled" })
+        .eq("id", task.id)
+        .neq("status", "cancelled");
       break;
     case "Disputed":
       await supabase

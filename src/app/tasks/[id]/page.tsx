@@ -16,8 +16,10 @@ import { isResearchSourcingListing } from "@/lib/listing-agents";
 import { LIVE_CATEGORY } from "@/lib/categories";
 import { contestWindowHours } from "@/lib/disputes/contest";
 import { computeContestFee } from "@/lib/disputes/service";
+import { resolveEscrowExpiredAt } from "@/lib/tasks/claim-expired";
+import ClaimExpiredButton from "@/components/ClaimExpiredButton";
 
-type Stage = "quoted" | "escrowed" | "validated" | "approved" | "disputed" | "settled";
+type Stage = "quoted" | "escrowed" | "validated" | "approved" | "disputed" | "settled" | "refunded";
 
 const STAGE_ORDER: { key: Stage; label: string }[] = [
   { key: "quoted", label: "Quoted" },
@@ -46,6 +48,13 @@ function deriveStage(
     return { stage: latestDispute.status === "resolved" ? "settled" : "disputed", latestDispute };
   }
   if (task.validations.length > 0) return { stage: "approved", latestDispute: null };
+  // Only SnappedBack and ExpiredClaimed ever set an escrow payment to
+  // 'refunded' outside the dispute-resolved case above (already
+  // intercepted by the latestDispute check) — see the webhook's
+  // handleContractEvent (lib/webhooks/handle-notification.ts).
+  if (task.payments.some((p) => p.kind === "escrow" && p.status === "refunded")) {
+    return { stage: "refunded", latestDispute: null };
+  }
   if (task.payments.some((p) => p.kind === "escrow") || task.status !== "assigned") {
     return { stage: "escrowed", latestDispute: null };
   }
@@ -58,14 +67,17 @@ function isBeforeDeadline(deadline: Date): boolean {
 
 function Stepper({ stage }: { stage: Stage }) {
   const disputed = stage === "disputed";
+  const refunded = stage === "refunded";
   const activeIndex = disputed
     ? STAGE_ORDER.findIndex((s) => s.key === "validated")
-    : STAGE_ORDER.findIndex((s) => s.key === stage);
+    : refunded
+      ? STAGE_ORDER.findIndex((s) => s.key === "escrowed")
+      : STAGE_ORDER.findIndex((s) => s.key === stage);
 
   return (
     <div className="flex flex-wrap items-center gap-2">
       {STAGE_ORDER.map((s, i) => {
-        const done = i < activeIndex || (i === activeIndex && !disputed);
+        const done = i < activeIndex || (i === activeIndex && !disputed && !refunded);
         const isCurrent = i === activeIndex;
         return (
           <div key={s.key} className="flex items-center gap-2">
@@ -73,12 +85,14 @@ function Stepper({ stage }: { stage: Stage }) {
               className={`rounded-full px-2.5 py-1 text-xs font-medium ${
                 disputed && isCurrent
                   ? "bg-red-500/15 text-red-400"
-                  : done
-                    ? "bg-emerald-500/15 text-emerald-400"
-                    : "bg-zinc-800 text-zinc-500"
+                  : refunded && isCurrent
+                    ? "bg-amber-500/15 text-amber-400"
+                    : done
+                      ? "bg-emerald-500/15 text-emerald-400"
+                      : "bg-zinc-800 text-zinc-500"
               }`}
             >
-              {disputed && isCurrent ? "Disputed" : s.label}
+              {disputed && isCurrent ? "Disputed" : refunded && isCurrent ? "Refunded" : s.label}
             </span>
             {i < STAGE_ORDER.length - 1 && <span className="text-zinc-700">→</span>}
           </div>
@@ -496,7 +510,8 @@ export default async function TaskDetailPage({
 
   const { stage, latestDispute } = deriveStage(task);
   const role = task.payer_wallet_id === wallet.id ? "Buyer" : "Seller";
-  const jobId = (task.metadata as { erc8183_job_id?: string } | null)?.erc8183_job_id;
+  const taskMetadata = (task.metadata as Record<string, unknown> | null) ?? {};
+  const jobId = taskMetadata.erc8183_job_id as string | undefined;
   const submissionError = (
     task.metadata as { submission_error?: { message: string; failed_at: string; circle_tx_id: string | null } } | null
   )?.submission_error;
@@ -508,6 +523,14 @@ export default async function TaskDetailPage({
     role === "Buyer" &&
     isResearchSourcingListing(task.listings?.sla) &&
     task.validations.length === 0;
+
+  // Only needed while there's still something to claim — resolves from
+  // stored metadata for every task created after this shipped, live-reads
+  // and self-heals for older ones (lib/tasks/claim-expired.ts).
+  const escrowExpiredAtSec =
+    role === "Buyer" && stage === "escrowed" && jobId
+      ? await resolveEscrowExpiredAt(task.id, taskMetadata, jobId)
+      : null;
 
   let contestDeadline: Date | null = null;
   if (task.accepted_at) {
@@ -525,7 +548,7 @@ export default async function TaskDetailPage({
   return (
     <main className="min-h-screen bg-zinc-950">
       <Nav email={session.email} />
-      <TaskLiveUpdates active={stage !== "settled"} />
+      <TaskLiveUpdates active={stage !== "settled" && stage !== "refunded"} />
       <div className="mx-auto max-w-3xl space-y-6 p-6">
         <div>
           <Link href="/tasks" className="text-sm text-zinc-500 hover:text-zinc-300">
@@ -606,6 +629,13 @@ export default async function TaskDetailPage({
         <AgentRoster agents={agents} />
 
         {canRunAgent && <DeliverButton taskId={task.id} />}
+
+        {escrowExpiredAtSec !== null && (
+          <ClaimExpiredButton
+            taskId={task.id}
+            expiredAtIso={new Date(escrowExpiredAtSec * 1000).toISOString()}
+          />
+        )}
 
         <section className="space-y-3">
           <h2 className="text-sm font-semibold text-zinc-200">Escrow & payments</h2>

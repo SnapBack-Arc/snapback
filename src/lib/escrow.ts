@@ -40,6 +40,7 @@ const SIG = {
   submit: "submit(uint256,bytes32)",
   resolveDispute: "resolveDispute(uint256,bool,bytes32)",
   transfer: "transfer(address,uint256)",
+  claimExpired: "claimExpired(uint256)",
 } as const;
 
 /**
@@ -257,6 +258,22 @@ export async function getJobStatus(jobId: string): Promise<number> {
   return job.status;
 }
 
+/**
+ * Reads a job's on-chain expiry timestamp directly (a view call — no
+ * wallet/gas needed). Used as a fallback for tasks created before
+ * tasks.metadata.escrow_expired_at was persisted at creation time — see
+ * lib/tasks/create.ts and the task detail page's self-heal read.
+ */
+export async function getJobExpiredAt(jobId: string): Promise<number> {
+  const job = await publicClient.readContract({
+    address: SNAPBACK_ESCROW,
+    abi: GET_JOB_ABI,
+    functionName: "getJob",
+    args: [BigInt(jobId)],
+  });
+  return Number(job.expiredAt);
+}
+
 /** Seller submits a deliverable hash — starts the snapback accept window. */
 export async function submitDeliverable(
   sellerCircleWalletId: string,
@@ -340,6 +357,35 @@ export async function resolveJobDispute(
     contractAddress: SNAPBACK_ESCROW,
     abiFunctionSignature: SIG.resolveDispute,
     abiParameters: [jobId, favorBuyer, reason],
+    fee: FEE,
+    ...(idempotencyKey ? { idempotencyKey } : {}),
+  });
+  return res.data?.id;
+}
+
+/**
+ * Buyer reclaims escrow if the provider never submitted before expiry
+ * (SnapBackEscrow.claimExpired, `onlyClient`-gated). Buyer wallets are
+ * Circle developer-controlled, same as every other wallet in this app — the
+ * backend signs this directly with the buyer's own circle_wallet_id, no
+ * buyer-facing signing UI needed, same pattern as every call above.
+ *
+ * Accepts an optional idempotencyKey — see lib/disputes/settlement.ts's
+ * runPaymentRefundLeg, which generates and persists one before the first
+ * attempt and reuses it across retries so a lost response never risks a
+ * second real on-chain call.
+ */
+export async function claimExpiredRefund(
+  buyerCircleWalletId: string,
+  jobId: string,
+  idempotencyKey?: string,
+): Promise<string | undefined> {
+  const client = getDeveloperControlledWalletsClient();
+  const res = await client.createContractExecutionTransaction({
+    walletId: buyerCircleWalletId,
+    contractAddress: SNAPBACK_ESCROW,
+    abiFunctionSignature: SIG.claimExpired,
+    abiParameters: [jobId],
     fee: FEE,
     ...(idempotencyKey ? { idempotencyKey } : {}),
   });
