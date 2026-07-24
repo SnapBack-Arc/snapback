@@ -14,8 +14,8 @@ import type { Json } from "@/lib/supabase/types";
  * dispute_contingency_refund only covers the resolveDispute-triggered path
  * (a disputeId exists to key retry state on). The sweepUncontestedContingencies
  * path (a clean completion with no dispute ever filed) has no dispute row to
- * attach settlement_state to and stays on the old, non-retry-safe pattern —
- * see the README's Known limitations.
+ * key retry state against — it goes through runPaymentRefundLeg below
+ * instead, keyed on the payment row itself.
  */
 export type SettlementLeg =
   | "onchain_resolve"
@@ -45,12 +45,118 @@ export class SettlementFailedError extends Error {
   }
 }
 
+/**
+ * Thrown by runPaymentRefundLeg when a sweep-path refund (no dispute row to
+ * key retry state against) exhausts its retries. The caller
+ * (refundOrReleaseHeldPayment) marks the payment 'refund_failed' and does
+ * NOT rethrow further — a stuck sweep refund must not fail whatever
+ * unrelated buyer action happened to trigger the sweep that found it.
+ */
+export class RefundFailedError extends Error {
+  constructor(public readonly paymentId: string) {
+    super(`Refund for payment ${paymentId} failed after ${MAX_ATTEMPTS} attempts`);
+    this.name = "RefundFailedError";
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function freshLegState(): LegState {
   return { idempotency_key: randomUUID(), circle_tx_id: null, attempt: 0, status: "pending" };
+}
+
+type LegStateStore = {
+  read: () => Promise<LegState | undefined>;
+  write: (state: LegState) => Promise<void>;
+};
+
+/**
+ * Shared retry-safe core behind both runSettlementLeg (state at
+ * disputes.settlement_state, keyed by leg name) and runPaymentRefundLeg
+ * (state at payments.metadata.refund_state, keyed by payment id — no
+ * dispute row to key against). Same contract either way, only where the
+ * LegState lives differs:
+ *
+ * Persists a UUID idempotency key BEFORE the first submit attempt and the
+ * returned Circle tx id BEFORE waiting for confirmation, so a retry after
+ * ANY failure resumes rather than blind-resubmits:
+ *
+ *   - No tx id persisted yet -> submit with the SAME idempotency key on every
+ *     retry. Circle's own idempotency contract ("if the same key is reused,
+ *     it will be treated as the same request and the original response will
+ *     be returned") makes this safe even if a prior submit's response was
+ *     lost after the transaction actually went through server-side.
+ *   - A tx id is persisted -> wait for its confirmation. If that throws,
+ *     check the transaction's real current state: a genuine terminal
+ *     failure (reverted/denied/cancelled/stuck) means that tx id is dead —
+ *     clear it and generate a fresh idempotency key for the next attempt.
+ *     Anything else (a transient poll/network error, or no terminal state
+ *     yet) means the underlying transaction may still be live — re-poll the
+ *     SAME tx id on the next attempt, never resubmit.
+ *
+ * `submit(idempotencyKey)` must be the one function that actually calls
+ * transferUsdc/resolveJobDispute, forwarding the given key through.
+ *
+ * Throws `makeFailedError()`'s error after MAX_ATTEMPTS with no definitive
+ * outcome. Callers must treat that as "needs a human to check Circle/chain
+ * state directly" — never retry further themselves, never assume any
+ * particular outcome, and never write a settled/refunded status as if this
+ * succeeded.
+ */
+async function runRetryableTransfer(
+  store: LegStateStore,
+  submit: (idempotencyKey: string) => Promise<string | undefined>,
+  makeFailedError: () => Error,
+): Promise<Hash> {
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const existing = await store.read();
+    let state: LegState = existing ?? freshLegState();
+    state = { ...state, attempt };
+    await store.write(state);
+
+    if (!state.circle_tx_id) {
+      try {
+        const txId = await submit(state.idempotency_key);
+        if (!txId) throw new Error("submit did not return a transaction id");
+        state = { ...state, circle_tx_id: txId, status: "submitted" };
+        await store.write(state);
+      } catch {
+        if (attempt === MAX_ATTEMPTS) break;
+        await sleep(BACKOFF_MS[attempt - 1]);
+        continue;
+      }
+    }
+
+    const circleTxId = state.circle_tx_id;
+    if (!circleTxId) {
+      // Unreachable in practice — the submit branch above always either sets
+      // circle_tx_id or `continue`s away before falling through here. Guard
+      // exists only to narrow the type for the calls below.
+      if (attempt === MAX_ATTEMPTS) break;
+      await sleep(BACKOFF_MS[attempt - 1]);
+      continue;
+    }
+
+    try {
+      const txHash = await waitForTxHash(circleTxId);
+      await store.write({ ...state, status: "confirmed" });
+      return txHash;
+    } catch {
+      const txState = await getTxState(circleTxId).catch(() => undefined);
+      if (isTerminalFailureState(txState)) {
+        // Dead tx id -- abandon it, get a fresh idempotency key for the next attempt.
+        await store.write({ ...freshLegState(), attempt });
+      }
+      if (attempt === MAX_ATTEMPTS) break;
+      await sleep(BACKOFF_MS[attempt - 1]);
+    }
+  }
+
+  const finalState = (await store.read()) ?? freshLegState();
+  await store.write({ ...finalState, status: "failed" });
+  throw makeFailedError();
 }
 
 async function readSettlementState(disputeId: string): Promise<Record<string, LegState>> {
@@ -77,82 +183,71 @@ async function writeLegState(disputeId: string, leg: SettlementLeg, legState: Le
 
 /**
  * Runs a real money-moving Circle call (an on-chain contract execution or a
- * USDC transfer) with retry-safe idempotency. Persists a UUID idempotency
- * key BEFORE the first submit attempt and the returned Circle tx id BEFORE
- * waiting for confirmation, so a retry after ANY failure resumes rather than
- * blind-resubmits:
- *
- *   - No tx id persisted yet -> submit with the SAME idempotency key on every
- *     retry. Circle's own idempotency contract ("if the same key is reused,
- *     it will be treated as the same request and the original response will
- *     be returned") makes this safe even if a prior submit's response was
- *     lost after the transaction actually went through server-side.
- *   - A tx id is persisted -> wait for its confirmation. If that throws,
- *     check the transaction's real current state: a genuine terminal
- *     failure (reverted/denied/cancelled/stuck) means that tx id is dead —
- *     clear it and generate a fresh idempotency key for the next attempt.
- *     Anything else (a transient poll/network error, or no terminal state
- *     yet) means the underlying transaction may still be live — re-poll the
- *     SAME tx id on the next attempt, never resubmit.
- *
- * `submit(idempotencyKey)` must be the one function that actually calls
- * transferUsdc/resolveJobDispute, forwarding the given key through.
+ * USDC transfer) with retry-safe idempotency, keyed on a dispute's
+ * `settlement_state`. See runRetryableTransfer's docblock for the full
+ * retry contract.
  *
  * Throws SettlementFailedError after MAX_ATTEMPTS with no definitive
- * outcome. Callers must treat that as "needs a human to check Circle/chain
- * state directly" — never retry further themselves, never assume any
- * particular outcome, and never write a `payments` row as if it settled.
+ * outcome — callers must treat that as "needs a human to check Circle/chain
+ * state directly" and never write a `payments` row as if it settled.
  */
 export async function runSettlementLeg(
   disputeId: string,
   leg: SettlementLeg,
   submit: (idempotencyKey: string) => Promise<string | undefined>,
 ): Promise<Hash> {
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const existing = (await readSettlementState(disputeId))[leg];
-    let state: LegState = existing ?? freshLegState();
-    state = { ...state, attempt };
-    await writeLegState(disputeId, leg, state);
+  return runRetryableTransfer(
+    {
+      read: async () => (await readSettlementState(disputeId))[leg],
+      write: (state) => writeLegState(disputeId, leg, state),
+    },
+    submit,
+    () => new SettlementFailedError(leg, disputeId),
+  );
+}
 
-    if (!state.circle_tx_id) {
-      try {
-        const txId = await submit(state.idempotency_key);
-        if (!txId) throw new Error(`${leg} submit did not return a transaction id`);
-        state = { ...state, circle_tx_id: txId, status: "submitted" };
-        await writeLegState(disputeId, leg, state);
-      } catch {
-        if (attempt === MAX_ATTEMPTS) break;
-        await sleep(BACKOFF_MS[attempt - 1]);
-        continue;
-      }
-    }
+async function readRefundState(paymentId: string): Promise<LegState | undefined> {
+  const supabase = createServiceSupabase();
+  const { data, error } = await supabase.from("payments").select("metadata").eq("id", paymentId).single();
+  if (error || !data) throw new Error(`Payment ${paymentId} not found while reading refund_state`);
+  return ((data.metadata as Record<string, unknown> | null) ?? {}).refund_state as LegState | undefined;
+}
 
-    const circleTxId = state.circle_tx_id;
-    if (!circleTxId) {
-      // Unreachable in practice — the submit branch above always either sets
-      // circle_tx_id or `continue`s away before falling through here. Guard
-      // exists only to narrow the type for the calls below.
-      if (attempt === MAX_ATTEMPTS) break;
-      await sleep(BACKOFF_MS[attempt - 1]);
-      continue;
-    }
+async function writeRefundState(paymentId: string, state: LegState): Promise<void> {
+  const supabase = createServiceSupabase();
+  const { data, error: readError } = await supabase.from("payments").select("metadata").eq("id", paymentId).single();
+  if (readError || !data) throw new Error(`Payment ${paymentId} not found while writing refund_state`);
+  const metadata = (data.metadata as Record<string, unknown> | null) ?? {};
+  const { error } = await supabase
+    .from("payments")
+    .update({ metadata: { ...metadata, refund_state: state } as Json })
+    .eq("id", paymentId);
+  if (error) throw new Error(`Failed to persist refund_state for payment ${paymentId}: ${error.message}`);
+}
 
-    try {
-      const txHash = await waitForTxHash(circleTxId);
-      await writeLegState(disputeId, leg, { ...state, status: "confirmed" });
-      return txHash;
-    } catch {
-      const txState = await getTxState(circleTxId).catch(() => undefined);
-      if (isTerminalFailureState(txState)) {
-        // Dead tx id -- abandon it, get a fresh idempotency key for the next attempt.
-        await writeLegState(disputeId, leg, { ...freshLegState(), attempt });
-      }
-      if (attempt === MAX_ATTEMPTS) break;
-      await sleep(BACKOFF_MS[attempt - 1]);
-    }
-  }
-
-  const finalState = (await readSettlementState(disputeId))[leg] ?? freshLegState();
-  await writeLegState(disputeId, leg, { ...finalState, status: "failed" });
-  throw new SettlementFailedError(leg, disputeId);
+/**
+ * Retry-safe counterpart to runSettlementLeg for the one real transfer that
+ * has no dispute row to key retry state against: sweepUncontestedContingencies'
+ * clean-completion refund (src/lib/disputes/service.ts). State lives at
+ * payments.metadata.refund_state instead of disputes.settlement_state — same
+ * LegState shape, same idempotency-key-before-submit / tx-id-before-confirm
+ * / bounded-retry contract, see runRetryableTransfer's docblock.
+ *
+ * The caller is expected to have already atomically claimed the payment
+ * (status flipped escrowed -> refund_pending via a conditional UPDATE)
+ * before calling this — that claim, not anything in here, is what prevents
+ * two concurrent callers from both submitting a real transfer for the same
+ * payment. Throws RefundFailedError (not SettlementFailedError) after
+ * MAX_ATTEMPTS; the caller marks the payment 'refund_failed' rather than
+ * propagating further — see RefundFailedError's docblock.
+ */
+export async function runPaymentRefundLeg(
+  paymentId: string,
+  submit: (idempotencyKey: string) => Promise<string | undefined>,
+): Promise<Hash> {
+  return runRetryableTransfer(
+    { read: () => readRefundState(paymentId), write: (state) => writeRefundState(paymentId, state) },
+    submit,
+    () => new RefundFailedError(paymentId),
+  );
 }

@@ -1120,6 +1120,8 @@ export type Database = {
         | "refunded"
         | "snapped_back"
         | "failed"
+        | "refund_pending"
+        | "refund_failed"
       task_status:
         | "draft"
         | "open"
@@ -1324,6 +1326,8 @@ export const Constants = {
         "refunded",
         "snapped_back",
         "failed",
+        "refund_pending",
+        "refund_failed",
       ],
       task_status: [
         "draft",

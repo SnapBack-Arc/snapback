@@ -403,18 +403,39 @@ the app enforces or sets it automatically.
   old tier-2-fallback note used to describe here, now against a narrower,
   rarer trigger since the deterministic tie-break resolves every ordinary
   no-majority case automatically.
-- **The sweep-path dispute-contingency refund still isn't retry-safe.**
-  `sweepUncontestedContingencies`'s clean-completion refund (a task that
-  auto-approved with no contest ever filed) calls the older
-  `refundOrReleaseHeldPayment` (`src/lib/disputes/service.ts`) — no
-  idempotency key, no persisted tx id, same ambiguous-failure risk every
-  other real transfer in this app used to have. Every dispute-triggered
-  refund (filing fee, contingency-on-a-resolved-dispute, insurance payout)
-  now goes through the retry-safe `runSettlementLeg` path instead, keyed on
-  `disputes.settlement_state` — but this one has no dispute row to key
-  retry state against (a clean completion never opens a dispute), so it's
-  structurally harder to fix without a different state-storage approach.
-  Disclosed, not silently inconsistent with the rest of this section.
+- **The sweep-path dispute-contingency refund's `refund_pending` claim has
+  no automatic recovery if the process dies mid-claim.**
+  `sweepUncontestedContingencies`'s clean-completion refund
+  (`refundOrReleaseHeldPayment`, `src/lib/disputes/service.ts`) is retry-safe
+  against a lost response — it's now a genuine concurrency fix, not just a
+  retry-after-failure one: `sweepUncontestedContingencies` runs on *every*
+  `/api/estimator/quote` submission for a buyer with a qualifying task, so
+  two overlapping requests (double-click, two tabs, a client retrying a
+  timed-out call) could previously both read the same payment as `escrowed`
+  and both submit a real `transferUsdc`. An atomic
+  `escrowed -> refund_pending` compare-and-swap `UPDATE` now claims the row
+  before any transfer is attempted, so only the call whose `UPDATE` actually
+  matches a row still `escrowed` proceeds — the other sees zero rows and
+  bails out. The transfer itself then runs through `runPaymentRefundLeg`
+  (`src/lib/disputes/settlement.ts`), the same idempotency-key-before-submit
+  / tx-id-before-confirm / bounded-retry pattern as every dispute-keyed
+  settlement leg, with state at `payments.metadata.refund_state` instead of
+  `disputes.settlement_state` (no dispute row exists to key against here).
+  Exhausted retries mark the payment `refund_failed` — durable, visible on
+  `/admin`'s Revenue-by-source table — rather than propagating an error into
+  whatever unrelated buyer action happened to trigger the sweep.
+  **Remaining gap:** if the process is killed in the narrow window between
+  the CAS claim landing and `runPaymentRefundLeg` completing even one
+  attempt, the payment is stuck at `refund_pending` rather than
+  `refund_failed` — no future sweep call will ever revisit it, since the
+  claim condition requires `status = 'escrowed'` and this row no longer
+  qualifies. There's no automatic recovery for this state (no cron/keeper
+  in this app to sweep it, same constraint as everywhere else in this
+  section). Surfaced as its own line on `/admin` (`payments` rows with
+  `dispute_contingency` kind, `refund_pending` status, `updated_at` older
+  than 10 minutes) so it's visible rather than silently stuck — but nothing
+  clears it automatically today; that would need a real recovery path
+  (e.g. an admin action to re-attempt or manually resolve), not yet built.
 - **Genuine buyer wins are hard to reach organically through the real
   contest path.** The judge panel's system prompt holds that "the seller is
   accountable ONLY for what their SLA actually promised" — combined with the

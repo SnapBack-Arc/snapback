@@ -133,12 +133,18 @@ export async function getTreasuryOverview(): Promise<TreasuryOverview> {
 
   const { data: payments } = await supabase
     .from("payments")
-    .select("kind, status, amount_usdc, metadata, tx_hash");
+    .select("kind, status, amount_usdc, metadata, tx_hash, updated_at");
 
-  const sum = (pred: (p: { kind: string; status: string; metadata: unknown; tx_hash: string | null }) => boolean) => {
-    const matched = (payments ?? []).filter((p) =>
-      pred(p as { kind: string; status: string; metadata: unknown; tx_hash: string | null }),
-    );
+  type PaymentSummaryRow = {
+    kind: string;
+    status: string;
+    metadata: unknown;
+    tx_hash: string | null;
+    updated_at: string;
+  };
+
+  const sum = (pred: (p: PaymentSummaryRow) => boolean) => {
+    const matched = (payments ?? []).filter((p) => pred(p as PaymentSummaryRow));
     return {
       total: matched.reduce((s, p) => s + Number(p.amount_usdc), 0),
       count: matched.length,
@@ -179,6 +185,27 @@ export async function getTreasuryOverview(): Promise<TreasuryOverview> {
       p.status === "released" &&
       p.tx_hash !== null &&
       (p.metadata as { demo?: boolean } | null)?.demo !== true,
+  );
+
+  // Two failure modes of the sweep-path contingency refund's CAS-claim +
+  // retry design (see refundOrReleaseHeldPayment in lib/disputes/service.ts):
+  // 'refund_failed' is the clean terminal case (retries genuinely
+  // exhausted, durably recorded). 'refund_pending' should only ever be a
+  // brief in-flight state between the claim landing and runPaymentRefundLeg
+  // finishing — but a process killed in that window leaves it stuck there
+  // forever, since a claimed row is no longer 'escrowed' and no future
+  // sweep call will revisit it. REFUND_PENDING_STALE_MS (10 minutes) is
+  // generous relative to the retry loop's own worst case (MAX_ATTEMPTS=3,
+  // backoff up to 10s each, well under a minute total) — past that, it's
+  // not "still working," it's stuck. Keyed off `updated_at`, already kept
+  // fresh on every write by the payments_updated_at trigger; no new column.
+  const REFUND_PENDING_STALE_MS = 10 * 60_000;
+  const refundFailedSweeps = sum((p) => p.kind === "dispute_contingency" && p.status === "refund_failed");
+  const refundPendingStale = sum(
+    (p) =>
+      p.kind === "dispute_contingency" &&
+      p.status === "refund_pending" &&
+      Date.now() - new Date(p.updated_at).getTime() > REFUND_PENDING_STALE_MS,
   );
 
   const revenueLines: RevenueLine[] = [
@@ -227,6 +254,24 @@ export async function getTreasuryOverview(): Promise<TreasuryOverview> {
       note:
         "Not included in the total below — this is money leaving Treasury, not revenue. Subtracted separately into netPositionUsdc. Excludes demo-seeded and pre-settlement-retry-fix rows that were never a real transfer (no tx_hash) — only genuinely confirmed real payouts count here.",
     },
+    {
+      label: "Sweep-path refunds failed (needs attention)",
+      total_usdc: refundFailedSweeps.total,
+      count: refundFailedSweeps.count,
+      note:
+        refundFailedSweeps.count > 0
+          ? "Buyer still owed this money — sweepUncontestedContingencies' refund exhausted its retries after a genuine Circle/chain failure. Not included in the total below (still owed, not kept). Check payments.metadata.refund_state on each row for the last attempt's Circle tx id."
+          : undefined,
+    },
+    {
+      label: "Sweep-path refunds stuck pending (>10 min, needs attention)",
+      total_usdc: refundPendingStale.total,
+      count: refundPendingStale.count,
+      note:
+        refundPendingStale.count > 0
+          ? "Claimed for refund but no attempt completed — likely a process killed between the claim landing and the first retry. No automatic recovery; this row will never be revisited by a future sweep since it's no longer 'escrowed'. See the README's Known limitations. Not included in the total below."
+          : undefined,
+    },
   ];
 
   const totalKeptRevenueUsdc =
@@ -266,7 +311,7 @@ export async function getTreasuryOverview(): Promise<TreasuryOverview> {
     insurancePoolBalanceUsdc,
     onChainVsLedgerDiscrepancyUsdc,
     discrepancyNote:
-      "As of this session, platform fees, validation fees, dispute-contingency refunds and forfeitures, filing-fee refunds and forfeitures, and insurance-pool payouts are all real Circle transfers to/from this Treasury wallet — not ledger-only bookkeeping. Two things this comparison still can't account for: (1) the sweep-path dispute-contingency refund (sweepUncontestedContingencies, a clean task completion with no dispute ever filed) still isn't retry-safe — no idempotency key, no persisted tx id, the same ambiguous-failure risk every dispute-triggered transfer in this app used to have before this session's settlement-retry work (see the README's Known limitations); (2) gas — Arc's native gas token is USDC itself, and every real transfer Treasury initiates spends some, with no line anywhere tracking it (see Gas Station spend below). A nonzero discrepancy today is no longer expected by default the way it used to be — worth checking directly: a settlement_failed dispute with a leg stuck at 'submitted' (a real transaction may be in flight with no confirmed outcome yet — see 'Disputes in progress' below) is the first place to look.",
+      "As of this session, platform fees, validation fees, dispute-contingency refunds and forfeitures, filing-fee refunds and forfeitures, and insurance-pool payouts are all real Circle transfers to/from this Treasury wallet — not ledger-only bookkeeping, and every one of them (including the sweep-path contingency refund) is now retry-safe against a lost response. One thing this comparison still can't account for: gas — Arc's native gas token is USDC itself, and every real transfer Treasury initiates spends some, with no line anywhere tracking it (see Gas Station spend below). A nonzero discrepancy today is no longer expected by default the way it used to be — worth checking directly: a settlement_failed dispute with a leg stuck at 'submitted' (see 'Disputes in progress' below), or a 'Sweep-path refunds failed/stuck pending' line above with a nonzero count, both mean a real transaction may be in flight or genuinely stuck with no confirmed outcome yet.",
     sweepFeed: (sweepFeed ?? []) as PaymentRow[],
   };
 }

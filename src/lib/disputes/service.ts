@@ -5,7 +5,13 @@ import { ensureTreasuryWallet, ensureArbiterWallet } from "@/lib/app-wallets";
 import { generateEducationalFeedback } from "@/lib/disputes/feedback";
 import { ARC_CHAIN_ID } from "@/lib/arc";
 import { resolveJobDispute, transferUsdc, waitForTxHash } from "@/lib/escrow";
-import { runSettlementLeg, SettlementFailedError, type SettlementLeg } from "@/lib/disputes/settlement";
+import {
+  runSettlementLeg,
+  SettlementFailedError,
+  runPaymentRefundLeg,
+  RefundFailedError,
+  type SettlementLeg,
+} from "@/lib/disputes/settlement";
 import type { Database } from "@/lib/supabase/types";
 
 /**
@@ -318,20 +324,47 @@ export async function resolveDispute(
  * Settles a held (`status: "escrowed"`) payment that was collected upfront
  * and may need to go back to the buyer depending on the outcome.
  *
- * NOT retry-safe — no idempotency key, no persisted tx id, blind single
- * attempt. This is intentional: the only remaining caller is
- * sweepUncontestedContingencies' clean-completion path, which has no
- * dispute row to key retry state against (disputes.settlement_state is
- * per-dispute). Every dispute-triggered refund uses settleHeldPaymentSafely
- * below instead. See the README's Known limitations for this gap.
+ * The only remaining caller is sweepUncontestedContingencies' clean-
+ * completion path, which has no dispute row to key retry state against
+ * (disputes.settlement_state is per-dispute) — every dispute-triggered
+ * refund uses settleHeldPaymentSafely below instead. Retry-safe via a
+ * different mechanism than that dispute-keyed path: an atomic
+ * `escrowed -> refund_pending` compare-and-swap UPDATE claims the row
+ * before any transfer is attempted, so two overlapping sweep calls for the
+ * same buyer (e.g. two concurrent /api/estimator/quote requests — this is
+ * NOT a rare retry-after-timeout scenario, sweepUncontestedContingencies
+ * runs on every quote submission) can't both submit a real transferUsdc for
+ * the same payment — only whichever call's UPDATE actually matches a row
+ * still `escrowed` proceeds; the other sees zero rows returned and bails
+ * out immediately. Once claimed, the transfer itself runs through
+ * runPaymentRefundLeg: idempotency key and Circle tx id persisted to
+ * payments.metadata.refund_state before submit/confirm, same retry-safe
+ * pattern as every dispute-keyed settlement leg.
  *
  * Buyer wins -> a real refund transfer, Treasury's wallet -> the buyer's
  * wallet. Buyer loses -> no transfer needed; the money is already in
- * Treasury's wallet from collection time.
+ * Treasury's wallet from collection time. (In practice this function is
+ * only ever called with buyerWon: true — settleDisputeContingency's
+ * no-disputeId branch, its only caller, is only reached from
+ * sweepUncontestedContingencies, which always passes true. The lost branch
+ * is still CAS-guarded for correctness if that ever changes.)
  *
- * Throws if the buyer's wallet can't be found, or the refund transfer fails
- * to submit or confirm. Safe to call twice: a payment that's already left
- * "escrowed" is a no-op.
+ * On exhausted retries (RefundFailedError), the payment is marked
+ * 'refund_failed' and this function returns normally rather than
+ * propagating — a stuck sweep refund must not fail whatever unrelated
+ * buyer action happened to trigger the sweep that found it. The money
+ * stays safely in Treasury's wallet either way; 'refund_failed' is a
+ * durable, admin-visible record that it's still owed back. See the
+ * README's Known limitations for the residual gap this doesn't cover: a
+ * process killed between the claim landing and the first retry attempt
+ * completing leaves the payment stuck at 'refund_pending' rather than
+ * 'refund_failed', since nothing revisits a row that's no longer
+ * 'escrowed'.
+ *
+ * Throws if the buyer's wallet can't be found — a genuine data-integrity
+ * error, not a retryable transfer failure. Safe to call twice: a payment
+ * that's already left "escrowed", or already claimed by a concurrent call,
+ * is a no-op.
  */
 async function refundOrReleaseHeldPayment(params: {
   paymentId: string;
@@ -350,6 +383,10 @@ async function refundOrReleaseHeldPayment(params: {
   if (payment.status !== "escrowed") return;
 
   if (!params.buyerWon) {
+    // Claimed via the same escrowed-gated CAS as the won branch below, even
+    // though this branch never calls out to Circle — the guard is what
+    // keeps two concurrent callers from both acting on the same row, not
+    // anything specific to money movement.
     await supabase
       .from("payments")
       .update({
@@ -359,9 +396,19 @@ async function refundOrReleaseHeldPayment(params: {
           settled_reason: params.lostReason,
         },
       })
-      .eq("id", payment.id);
+      .eq("id", payment.id)
+      .eq("status", "escrowed");
     return;
   }
+
+  const { data: claimed } = await supabase
+    .from("payments")
+    .update({ status: "refund_pending" })
+    .eq("id", payment.id)
+    .eq("status", "escrowed")
+    .select("*")
+    .maybeSingle();
+  if (!claimed) return; // lost the race — another call already claimed or settled this refund
 
   const { data: buyerWallet } = await supabase
     .from("wallets")
@@ -370,35 +417,40 @@ async function refundOrReleaseHeldPayment(params: {
     .single();
   if (!buyerWallet) {
     throw new Error(
-      `Buyer wallet ${params.buyerWalletId} not found — cannot refund held payment ${payment.id}`,
+      `Buyer wallet ${params.buyerWalletId} not found — cannot refund held payment ${claimed.id}`,
     );
   }
 
   const treasury = await ensureTreasuryWallet();
-  const refundTxId = await transferUsdc(
-    treasury.circle_wallet_id,
-    buyerWallet.address as Address,
-    String(payment.amount_usdc),
-  );
-  if (!refundTxId) {
-    throw new Error(`Refund transfer for held payment ${payment.id} did not return a transaction id`);
-  }
-  // Rejects on a terminal failure state, including a revert that still
-  // produced a txHash — see lib/escrow.ts's waitForTxHash.
-  const refundTxHash = await waitForTxHash(refundTxId);
+  try {
+    const refundTxHash = await runPaymentRefundLeg(claimed.id, (idempotencyKey) =>
+      transferUsdc(
+        treasury.circle_wallet_id,
+        buyerWallet.address as Address,
+        String(claimed.amount_usdc),
+        idempotencyKey,
+      ),
+    );
 
-  await supabase
-    .from("payments")
-    .update({
-      status: "refunded",
-      tx_hash: refundTxHash,
-      metadata: {
-        ...((payment.metadata as Record<string, unknown>) ?? {}),
-        collected_tx_hash: payment.tx_hash,
-        settled_reason: params.wonReason,
-      },
-    })
-    .eq("id", payment.id);
+    await supabase
+      .from("payments")
+      .update({
+        status: "refunded",
+        tx_hash: refundTxHash,
+        metadata: {
+          ...((claimed.metadata as Record<string, unknown>) ?? {}),
+          collected_tx_hash: claimed.tx_hash,
+          settled_reason: params.wonReason,
+        },
+      })
+      .eq("id", claimed.id);
+  } catch (err) {
+    if (err instanceof RefundFailedError) {
+      await supabase.from("payments").update({ status: "refund_failed" }).eq("id", claimed.id);
+      return;
+    }
+    throw err;
+  }
 }
 
 /**
@@ -490,9 +542,9 @@ async function settleHeldPaymentSafely(params: {
  * refund through settleHeldPaymentSafely's retry-safe pattern, keyed on that
  * dispute's settlement_state. sweepUncontestedContingencies calls this with
  * no disputeId — a clean completion with no dispute ever filed has no
- * dispute row to key retry state against — so that path stays on the
- * older, non-retry-safe refundOrReleaseHeldPayment. See the README's Known
- * limitations for that remaining gap.
+ * dispute row to key retry state against — so that path goes through
+ * refundOrReleaseHeldPayment instead, which is retry-safe via a payment-row
+ * CAS claim rather than a dispute-keyed one. See that function's docblock.
  */
 async function settleDisputeContingency(
   taskId: string,
