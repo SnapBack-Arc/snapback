@@ -137,7 +137,7 @@ export async function submitQuoteRequest(
   }
 
   const categoryDef = findCategory(category);
-  if (!categoryDef || categoryDef.status !== "live") {
+  if (!categoryDef) {
     throw new Error(`Category "${category}" is not live yet — no quotes can be issued for it.`);
   }
 

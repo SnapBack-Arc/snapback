@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { LIVE_CATEGORY } from "@/lib/categories";
 
 /**
  * Manually triggers the Research & Sourcing agent's real execution
@@ -43,7 +44,7 @@ export default function DeliverButton({ taskId }: { taskId: string }) {
   return (
     <div className="space-y-2 rounded-xl border border-cyan-500/30 bg-cyan-500/5 p-4">
       <div>
-        <p className="text-sm font-medium text-cyan-300">Research & Sourcing agent</p>
+        <p className="text-sm font-medium text-cyan-300">{LIVE_CATEGORY.label} agent</p>
         <p className="mt-1 text-xs text-zinc-400">
           This seller is a real worker, not a placeholder — running it actually calls Claude with
           live web search, produces a sourced deliverable, and submits it through the same

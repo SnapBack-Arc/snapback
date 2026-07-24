@@ -7,7 +7,7 @@ import { formatUsdc } from "@/lib/format";
 import AgentRoster, { AGENT_COLOR, type AgentEntry } from "@/components/AgentRoster";
 import { isResearchSourcingListing } from "@/lib/listing-agents";
 import { estimateResearchSourcingCostUsdc } from "@/lib/agents/research-sourcing-pricing";
-import { CATEGORIES, findCategory, type CategoryKey } from "@/lib/categories";
+import { LIVE_CATEGORY, type CategoryKey } from "@/lib/categories";
 
 type GateResult = "original" | "retry_free" | "retry_charged" | "topic_change";
 
@@ -79,14 +79,9 @@ export default function TaskSubmissionFlow({
 }) {
   const router = useRouter();
 
-  // Step 0: category. `pickedCategory` tracks whatever the buyer clicked
-  // (including a coming-soon one, so its "not live" state can be shown
-  // clearly); `category` is only ever set once that pick is confirmed LIVE —
-  // everything below (textarea, quote, submit) gates on `category`, not
-  // `pickedCategory`, so a coming-soon pick can never unlock progression.
-  const [pickedCategory, setPickedCategory] = useState<CategoryKey | null>(null);
-  const pickedCategoryDef = pickedCategory ? findCategory(pickedCategory) : null;
-  const category = pickedCategoryDef?.status === "live" ? pickedCategoryDef : null;
+  // Exactly one category exists (lib/categories.ts) — no picker step, no
+  // state to track a pick against.
+  const category = LIVE_CATEGORY;
 
   const [specText, setSpecText] = useState(initialSpecText ?? "");
   const [quoting, setQuoting] = useState(false);
@@ -102,24 +97,9 @@ export default function TaskSubmissionFlow({
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  function selectCategory(key: CategoryKey) {
-    setPickedCategory(key);
-    // A category switch is a new job by definition — clear any quote/listing
-    // state left over from a previous category rather than let it leak
-    // into this pick.
-    setQuote(null);
-    setQuoteError(null);
-    setCategoryMismatch(null);
-    setListings(null);
-    setListingsError(null);
-    setSelectedListingId(null);
-    setTitle("");
-    setSubmitError(null);
-  }
-
   async function getQuote(e: React.FormEvent) {
     e.preventDefault();
-    if (!specText.trim() || !category) return;
+    if (!specText.trim()) return;
     setQuoting(true);
     setQuoteError(null);
     setCategoryMismatch(null);
@@ -240,82 +220,43 @@ export default function TaskSubmissionFlow({
         <p className="mt-1 text-sm text-zinc-400">
           Describe what you need in plain language. We&apos;ll quote it against active Marketplace sellers before you pay anything.
         </p>
+        <p className="mt-2 text-xs text-zinc-500">
+          This request goes to SnapBack&apos;s live integration:{" "}
+          <span className="text-zinc-300">{category.label}</span>.
+        </p>
       </div>
 
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-zinc-200">1. Choose a category</h2>
-        <div className="grid gap-2 sm:grid-cols-2">
-          {CATEGORIES.map((c) => {
-            const isPicked = pickedCategory === c.key;
-            const isLive = c.status === "live";
-            return (
-              <button
-                key={c.key}
-                type="button"
-                onClick={() => selectCategory(c.key)}
-                className={`w-full rounded-xl border px-4 py-3 text-left transition ${
-                  isPicked
-                    ? isLive
-                      ? "border-emerald-500 bg-emerald-500/10"
-                      : "border-amber-500/60 bg-amber-500/5"
-                    : "border-zinc-800 bg-zinc-900 hover:border-zinc-700"
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="font-semibold text-white">{c.label}</span>
-                  {!isLive && (
-                    <span className="rounded-full bg-zinc-700/40 px-2 py-0.5 text-xs text-zinc-300">
-                      Coming soon
-                    </span>
-                  )}
-                </div>
-                <p className="mt-0.5 text-sm text-zinc-400">{c.description}</p>
-              </button>
-            );
-          })}
-        </div>
-        {pickedCategoryDef && pickedCategoryDef.status !== "live" && (
-          <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-300">
-            {pickedCategoryDef.label} is coming soon and isn&apos;t accepting tasks yet — pick
-            Research &amp; Sourcing to continue.
+      <form onSubmit={getQuote} className="space-y-3">
+        <h2 className="text-sm font-semibold text-zinc-200">Describe the task</h2>
+        {initialSpecText && (
+          <p className="rounded-lg border border-cyan-500/30 bg-cyan-500/5 px-3 py-2 text-xs text-cyan-300">
+            Pre-filled from a rejected task&apos;s feedback — edit as needed. This is a new,
+            separately-priced task; nothing is resubmitted automatically.
           </p>
         )}
-      </section>
-
-      {category && (
-        <form onSubmit={getQuote} className="space-y-3">
-          <h2 className="text-sm font-semibold text-zinc-200">2. Describe the task</h2>
-          {initialSpecText && (
-            <p className="rounded-lg border border-cyan-500/30 bg-cyan-500/5 px-3 py-2 text-xs text-cyan-300">
-              Pre-filled from a rejected task&apos;s feedback — edit as needed. This is a new,
-              separately-priced task; nothing is resubmitted automatically.
-            </p>
-          )}
-          <textarea
-            value={specText}
-            onChange={(e) => setSpecText(e.target.value)}
-            rows={4}
-            placeholder="e.g. Find 5 suppliers of LED panels in Southeast Asia, deliver as a comparison table."
-            disabled={quoting}
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-60"
-          />
-          <button
-            type="submit"
-            disabled={quoting || !specText.trim()}
-            className="rounded-lg bg-emerald-500 px-4 py-2 font-semibold text-zinc-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {quoting ? "Quoting…" : quote ? "Re-quote" : "Get quote"}
-          </button>
-          {quoteError && <p className="text-sm text-red-400">{quoteError}</p>}
-          {categoryMismatch && (
-            <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-300">
-              This looks like a different kind of request than {category.label}: {categoryMismatch.reason}{" "}
-              Switch categories above, or rewrite your request so it&apos;s actually about{" "}
-              {category.label.toLowerCase()}.
-            </p>
-          )}
-        </form>
-      )}
+        <textarea
+          value={specText}
+          onChange={(e) => setSpecText(e.target.value)}
+          rows={4}
+          placeholder="e.g. Find 5 suppliers of LED panels in Southeast Asia, deliver as a comparison table."
+          disabled={quoting}
+          className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-60"
+        />
+        <button
+          type="submit"
+          disabled={quoting || !specText.trim()}
+          className="rounded-lg bg-emerald-500 px-4 py-2 font-semibold text-zinc-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {quoting ? "Quoting…" : quote ? "Re-quote" : "Get quote"}
+        </button>
+        {quoteError && <p className="text-sm text-red-400">{quoteError}</p>}
+        {categoryMismatch && (
+          <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-300">
+            This looks like a different kind of request than {category.label}: {categoryMismatch.reason}{" "}
+            Rewrite your request so it&apos;s actually about {category.label.toLowerCase()}.
+          </p>
+        )}
+      </form>
 
       {quote && (
         <section className="space-y-4 rounded-xl border border-zinc-800 bg-zinc-900 p-5">
@@ -432,7 +373,7 @@ export default function TaskSubmissionFlow({
           {listings && listings.length > 0 && !isRealMatch && (
             <div className="space-y-2">
               <p className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-400">
-                This demo currently runs one real worker agent (Research &amp; Sourcing). In the
+                This demo currently runs one real worker agent ({category.label}). In the
                 full system, you&apos;d see 3-5 real candidate quotes here to choose from — these
                 two slots are reserved to show that layout, but aren&apos;t live in this build
                 yet.

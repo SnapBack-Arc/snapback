@@ -4,6 +4,7 @@ import { getUserDetail } from "@/lib/admin-data";
 import { explorerTxUrl } from "@/lib/arc";
 import { formatDate, formatUsdc, statusClasses } from "@/lib/format";
 import { contingentDisclosureLine } from "@/lib/estimator/fees";
+import { LIVE_CATEGORY } from "@/lib/categories";
 import ConfirmAction from "@/components/admin/ConfirmAction";
 import FlagUserForm from "@/components/admin/FlagUserForm";
 
@@ -148,8 +149,8 @@ export default async function AdminUserDetailPage({
                       body={{ source: "last_deliverable" }}
                     />
                     <ConfirmAction
-                      label="Re-run Research & Sourcing agent"
-                      confirmLabel="regenerate a fresh Research & Sourcing deliverable and validate it"
+                      label={`Re-run ${LIVE_CATEGORY.label} agent`}
+                      confirmLabel={`regenerate a fresh ${LIVE_CATEGORY.label} deliverable and validate it`}
                       url={`/api/admin/tasks/${t.id}/revalidate`}
                       body={{ source: "fresh_research" }}
                     />

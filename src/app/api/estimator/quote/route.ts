@@ -14,10 +14,9 @@ import { findCategory, type CategoryKey } from "@/lib/categories";
  * `category`) → compare subject + difficulty against the active session →
  * retry (free/charged) or topic change (sweep + reset).
  *
- * `category` must be one of the fixed keys in lib/categories.ts AND live —
- * this is the actual enforcement point (the picker's client-side block is
- * just UX): a request for a coming-soon category is rejected here with a
- * 400 before submitQuoteRequest even runs, same as any other malformed body.
+ * `category` must be one of the fixed keys in lib/categories.ts — today just
+ * `research_sourcing` — rejected here with a 400 before submitQuoteRequest
+ * even runs, same as any other malformed body.
  */
 export async function POST(request: Request) {
   const session = await getSession();
@@ -41,12 +40,6 @@ export async function POST(request: Request) {
   const categoryDef = findCategory(category);
   if (!categoryDef) {
     return NextResponse.json({ error: "unknown category" }, { status: 400 });
-  }
-  if (categoryDef.status !== "live") {
-    return NextResponse.json(
-      { error: `"${categoryDef.label}" is coming soon and isn't accepting tasks yet.` },
-      { status: 400 },
-    );
   }
 
   const wallet = await getUserWallet(session.uid);

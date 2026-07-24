@@ -4,12 +4,11 @@ import { requireServerEnv } from "@/lib/env";
 import { payParallelSearch, ParallelPaymentError } from "@/lib/agents/parallel-client";
 
 /**
- * The ONE genuine, non-simulated worker agent in the marketplace (see
- * README.md "Simulated vs. real sellers"). Every other seed listing is
- * placeholder inventory that a real task just sits against forever — no
- * code anywhere executes their side of the work. This one actually does:
- * given a task's request, it researches it with Claude's real web_search
- * tool and returns a structured deliverable built only from sources it
+ * SnapBack's one real integration (see README.md "Research & Sourcing — the
+ * one real integration") — proof the dispute-resolution/escrow/judge-panel
+ * safety layer works against genuine agent activity, not a marketplace
+ * catalog. Given a task's request, it researches it with Claude's real
+ * web_search tool and returns a structured deliverable built only from sources it
  * actually found, which flows into the exact same runValidation() pipeline
  * (lib/validator-service.ts) any other seller's deliverable would use — no
  * special-casing in validation, approval, disputes, or settlement. The

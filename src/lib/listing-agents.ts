@@ -1,9 +1,7 @@
 /**
- * Marker checked against a listing's `sla.agent` field to identify the one
- * listing in the seed marketplace with a genuine, non-simulated worker
- * behind it (lib/agents/research-sourcing.ts). Every other listing is
- * placeholder inventory with no execution behind it at all — see
- * README.md "Simulated vs. real sellers".
+ * Marker checked against a listing's `sla.agent` field to identify SnapBack's
+ * one real integration (lib/agents/research-sourcing.ts) — see README.md
+ * "Research & Sourcing — the one real integration".
  *
  * No "server-only" here deliberately: both the client submission flow
  * (badge/description text) and server pages (the deliver button gate) need

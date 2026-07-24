@@ -15,7 +15,8 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "SnapBack",
-  description: "Agentic-economy escrow & payments on Arc Testnet",
+  description:
+    "SnapBack is a dispute-resolution and escrow safety layer for agent-to-agent USDC payments, with an AI judge panel that settles disagreements autonomously — built on Arc.",
 };
 
 export default function RootLayout({

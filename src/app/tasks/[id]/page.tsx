@@ -13,6 +13,7 @@ import DeliverButton from "@/components/DeliverButton";
 import ContestDeliveryButton from "@/components/ContestDeliveryButton";
 import TaskLiveUpdates from "@/components/TaskLiveUpdates";
 import { isResearchSourcingListing } from "@/lib/listing-agents";
+import { LIVE_CATEGORY } from "@/lib/categories";
 import { contestWindowHours } from "@/lib/disputes/contest";
 import { computeContestFee } from "@/lib/disputes/service";
 
@@ -108,7 +109,7 @@ function ResearchDeliverableView({ deliverable }: { deliverable: unknown }) {
   if (!isResearchDeliverable(deliverable)) return null;
   return (
     <div className="mt-3 space-y-2 border-t border-zinc-800 pt-3">
-      <p className="text-xs font-medium text-cyan-400">Delivered by the Research & Sourcing agent</p>
+      <p className="text-xs font-medium text-cyan-400">Delivered by the {LIVE_CATEGORY.label} agent</p>
       <p className="text-zinc-300">{deliverable.overall_summary}</p>
       <div className="space-y-1">
         {deliverable.findings.map((f, i) => (

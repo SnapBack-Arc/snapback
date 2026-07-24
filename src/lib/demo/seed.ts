@@ -5,7 +5,7 @@ import { getUserWallet, createArcWalletForUser } from "@/lib/circle-wallets";
 import { computeContestFee } from "@/lib/disputes/service";
 import { CIRCLE_ARC_BLOCKCHAIN, ARC_CHAIN_ID } from "@/lib/arc";
 import { DEMO_TEST_ACCOUNT_EMAIL, DEMO_TEST_WALLET_REF_ID } from "@/lib/demo/config";
-import type { CategoryKey } from "@/lib/categories";
+import { LIVE_CATEGORY, type CategoryKey } from "@/lib/categories";
 import type { Database } from "@/lib/supabase/types";
 
 type WalletRow = Database["public"]["Tables"]["wallets"]["Row"];
@@ -738,20 +738,13 @@ async function purgeDemoTestAccountHistory(walletId: string): Promise<void> {
 }
 
 /**
- * Baseline marketplace inventory. Prices are graduated by rough
- * complexity/turnaround, all micro-task scale consistent with the
- * platform's own fee schedule (e.g. a $2 base filing fee, a 0.075%
- * happy-path skim) — except Data engineering, deliberately priced above
- * the $50 micro/large threshold (see arbitrationFeePct in
- * lib/estimator/fees.ts) so both contingent-fee tiers are actually
- * reachable from the live marketplace, not just the 2% micro tier.
- *
- * Categories span genuinely different domains on purpose — even now that
- * matching is an exact category filter (lib/estimator/marketplace.ts) rather
- * than a keyword ILIKE guess, a demo walking through /marketplace should see
- * more than one kind of seller. Each listing's `category` is the fixed
- * taxonomy key from lib/categories.ts — the single source of truth for which
- * categories exist and which one (Research & Sourcing) is actually live.
+ * Baseline marketplace inventory — one listing, Research & Sourcing, the
+ * single real integration SnapBack demonstrates its safety layer against
+ * (see lib/categories.ts). `title` derives from LIVE_CATEGORY.label rather
+ * than a second hand-typed copy — this used to be one of several
+ * placeholder-category listings with independently-typed titles; that
+ * duplication is exactly what caused a prior title-rename to leave an
+ * orphaned listing behind (see ensureSellerListings' docblock below).
  */
 const BASELINE_LISTINGS: {
   title: string;
@@ -761,21 +754,7 @@ const BASELINE_LISTINGS: {
   category: CategoryKey;
 }[] = [
   {
-    title: "Copywriting & content",
-    description: "Web copy, email sequences, and marketing content matching your brand voice guide.",
-    price_usdc: 12,
-    sla: { turnaround_hours: 12, tone_match: true },
-    category: "copywriting_content",
-  },
-  {
-    title: "Market research report",
-    description: "Structured research reports on any market or competitor set, delivered as a table.",
-    price_usdc: 18,
-    sla: { turnaround_hours: 24, revisions: 1 },
-    category: "market_research_report",
-  },
-  {
-    title: "Research & Sourcing",
+    title: LIVE_CATEGORY.label,
     description: "Real research: finds and compares sources, suppliers, or vendors for your request using live web search, delivered as a sourced findings list with confidence notes per source.",
     // Baseline/display price only — a Claude call + a few web searches costs
     // fractions of a cent to low tens of cents, nowhere near a flat $25.
@@ -786,16 +765,14 @@ const BASELINE_LISTINGS: {
     // Estimator's blended cost average, priced for a moderate/typical task.
     price_usdc: 0.15,
     // `agent: "research-sourcing"` is the marker checked by
-    // /api/tasks/[id]/deliver and the task detail page: this is the ONE
-    // listing in the seed marketplace backed by a genuine, non-simulated
-    // worker (lib/agents/research-sourcing.ts) — every other listing here
-    // is placeholder inventory with no seller-side execution behind it at
-    // all. See README.md "Simulated vs. real sellers" for the full picture.
-    // min_distinct_sources/distinctness_basis: the agent now self-reports
-    // source_role/overlaps_with per finding (lib/agents/research-sourcing.ts)
-    // so "3 sources" can't quietly mean the same underlying brand counted
-    // twice via an undisclosed-as-independent distributor — see the README's
-    // "Research & Sourcing" section for the honesty caveat on this basis.
+    // /api/tasks/[id]/deliver and the task detail page: this is the real,
+    // non-simulated worker (lib/agents/research-sourcing.ts) behind this
+    // listing. min_distinct_sources/distinctness_basis: the agent
+    // self-reports source_role/overlaps_with per finding
+    // (lib/agents/research-sourcing.ts) so "3 sources" can't quietly mean
+    // the same underlying brand counted twice via an undisclosed-as-
+    // independent distributor — see the README's "Research & Sourcing"
+    // section for the honesty caveat on this basis.
     sla: {
       turnaround_hours: 6,
       min_sources: 3,
@@ -805,28 +782,16 @@ const BASELINE_LISTINGS: {
     },
     category: "research_sourcing",
   },
-  {
-    title: "Icon & illustration design",
-    description: "Custom icon sets and illustrations in SVG, matched to your style reference.",
-    price_usdc: 28,
-    sla: { format: "SVG", revisions: 2 },
-    category: "icon_illustration_design",
-  },
-  {
-    title: "Data engineering & scripts",
-    description: "One-off scripts for data migration, cleaning, and transformation.",
-    price_usdc: 65,
-    sla: { turnaround_hours: 48, tested: true },
-    category: "data_engineering_scripts",
-  },
 ];
 
 /**
- * The Estimator (estimateSellerCost) requires at least 2 active listings to
- * produce any quote at all, and the marketplace page has nothing to show
- * without them — this is baseline marketplace inventory, not demo-account
- * history, so it's ensured unconditionally (not gated behind the task-count
- * short-circuit below) and used by real (non-demo) buyers too.
+ * The Estimator (estimateSellerCost) requires at least one active listing in
+ * the buyer's chosen category to produce a quote at all (an exact category
+ * filter — lib/estimator/marketplace.ts), and the marketplace page has
+ * nothing to show without it — this is baseline marketplace inventory, not
+ * demo-account history, so it's ensured unconditionally (not gated behind
+ * the task-count short-circuit below) and used by real (non-demo) buyers
+ * too.
  *
  * BASELINE_LISTINGS is treated as the full declarative source of truth:
  * upserts by (seller_wallet_id, title), then prunes any of this seller's

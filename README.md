@@ -1,32 +1,33 @@
 ## SnapBack
 
-An agentic-economy escrow/payments demo on Arc Testnet: buyers describe a task in
-plain language, get a quote against Marketplace listings, fund an escrow-backed
-job, and the delivery goes through an automated buyer-agent validator with a
-judge-panel dispute path if it fails.
+SnapBack is a dispute-resolution and escrow safety layer for agent-to-agent
+USDC payments, with an AI judge panel that settles disagreements autonomously
+— built on Arc.
 
-### Simulated vs. real sellers
+Concretely, on Arc Testnet today: a buyer describes a task in plain language,
+gets a quote, funds an escrow-backed job, and the delivery goes through an
+automated buyer-agent validator with a judge-panel dispute path if it fails.
+The payment/escrow/dispute/judge infrastructure itself is fully real and
+live — real Circle wallets, real on-chain USDC locks, a real Claude-based
+validator, real dispute filing and settlement — demonstrated end-to-end
+against one real integration, not a marketplace of listings to browse.
 
-The payment/escrow/dispute/judge infrastructure is fully real and live on Arc
-Testnet — real Circle wallets, real on-chain USDC locks, a real Claude-based
-validator, real dispute filing and settlement. **Most seller listings in the seed
-marketplace are simulated placeholder data**, though: they demonstrate that
-infrastructure working end-to-end, but nothing executes their side of the work.
-A task commissioned against one just sits funded until a deliverable is submitted
-by hand (e.g. via `POST /api/validate`).
+### Research & Sourcing — the one real integration
 
-**Research & Sourcing is the one exception** — a genuine, non-simulated worker
-agent (`src/lib/agents/research-sourcing.ts`). Selecting it as a seller and
-clicking "Run agent" on the task detail page actually calls Claude with a real
-`web_search` tool, researches the request for real, and submits a structured
-deliverable (sourced findings with confidence notes) built only from sources it
-actually found. That deliverable flows through the exact same validator →
-approve/dispute → settlement pipeline (`runValidation` in
-`src/lib/validator-service.ts`) that any other seller's submission would — there
-is no special-casing in that pipeline. The only place this listing is treated
-differently is the trigger itself: `src/app/api/tasks/[id]/deliver/route.ts`
-checks for a `sla.agent === "research-sourcing"` marker on the listing before
-invoking the worker (see `src/lib/listing-agents.ts`).
+**Research & Sourcing is SnapBack's one genuine, non-simulated worker agent**
+(`src/lib/agents/research-sourcing.ts`), proof that the safety layer works
+against real agent activity rather than a catalog of placeholder sellers.
+Selecting it and clicking "Run agent" on the task detail page actually calls
+Claude with a real `web_search` tool, researches the request for real, and
+submits a structured deliverable (sourced findings with confidence notes)
+built only from sources it actually found. That deliverable flows through the
+exact same validator → approve/dispute → settlement pipeline (`runValidation`
+in `src/lib/validator-service.ts`) any other seller's submission would go
+through — there is no special-casing in that pipeline. The only place this
+listing is treated differently is the trigger itself:
+`src/app/api/tasks/[id]/deliver/route.ts` checks for a
+`sla.agent === "research-sourcing"` marker on the listing before invoking the
+worker (see `src/lib/listing-agents.ts`).
 
 Adding another real worker for a different listing means writing an equivalent
 agent module and marking its listing the same way — the validation/dispute/

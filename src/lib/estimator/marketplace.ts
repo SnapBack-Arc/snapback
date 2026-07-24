@@ -8,17 +8,16 @@ import { estimateResearchSourcingCostUsdc } from "@/lib/agents/research-sourcing
 /**
  * Pulls a seller cost estimate from comparable active Marketplace listings
  * within the buyer's chosen category — an exact `category` filter, not a
- * text guess. The category is chosen before any spec text is even written
- * (see TaskSubmissionFlow's picker step), so by the time this runs there's
- * no ambiguity left to fall back from: a category with no active listings is
- * a real error (nothing sellable exists), not a "couldn't find a match"
- * case to paper over with irrelevant cheap listings from other categories.
+ * text guess. `category` is always `research_sourcing` today (see
+ * lib/categories.ts — the one live category, no picker step needed), so by
+ * the time this runs there's no ambiguity left to fall back from: a category
+ * with no active listings is a real error (nothing sellable exists), not a
+ * "couldn't find a match" case to paper over with irrelevant cheap listings
+ * from other categories.
  *
- * What gets matched is almost all simulated placeholder inventory — see
- * README.md "Simulated vs. real sellers". Only the listing tagged
- * `sla.agent === "research-sourcing"` (lib/listing-agents.ts) has a genuine
- * worker behind it (lib/agents/research-sourcing.ts); everything else this
- * function can return just sits funded with no execution behind it.
+ * The listing tagged `sla.agent === "research-sourcing"`
+ * (lib/listing-agents.ts) is SnapBack's one real integration — see README.md
+ * "Research & Sourcing — the one real integration".
  *
  * PRIORITY FIX: when a matched listing is Research & Sourcing, its
  * contribution to the estimate is the real per-task price
