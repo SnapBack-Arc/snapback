@@ -276,6 +276,7 @@ export type Database = {
           created_at: string
           difficulty: number
           disclosed_contingent_fee_pct: number | null
+          dispute_insurance_premium_usdc: number | null
           escrow_held_usdc: number
           guaranteed_total_usdc: number | null
           happy_path_fee_usdc: number | null
@@ -300,6 +301,7 @@ export type Database = {
           created_at?: string
           difficulty: number
           disclosed_contingent_fee_pct?: number | null
+          dispute_insurance_premium_usdc?: number | null
           escrow_held_usdc?: number
           guaranteed_total_usdc?: number | null
           happy_path_fee_usdc?: number | null
@@ -324,6 +326,7 @@ export type Database = {
           created_at?: string
           difficulty?: number
           disclosed_contingent_fee_pct?: number | null
+          dispute_insurance_premium_usdc?: number | null
           escrow_held_usdc?: number
           guaranteed_total_usdc?: number | null
           happy_path_fee_usdc?: number | null
@@ -1113,6 +1116,7 @@ export type Database = {
         | "validation_fee"
         | "dispute_contingency"
         | "marketplace_payment"
+        | "dispute_insurance_premium"
       payment_status:
         | "pending"
         | "escrowed"
@@ -1318,6 +1322,7 @@ export const Constants = {
         "validation_fee",
         "dispute_contingency",
         "marketplace_payment",
+        "dispute_insurance_premium",
       ],
       payment_status: [
         "pending",

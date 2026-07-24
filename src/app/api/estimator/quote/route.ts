@@ -85,6 +85,11 @@ export async function POST(request: Request) {
         // charged (validation always runs), folded into guaranteed_total_usdc
         // like happy_path_fee_usdc, shown as its own line.
         validation_fee_usdc: Number(result.session.validation_fee_usdc ?? 0),
+        // Unconditional and non-refundable, folded into guaranteed_total_usdc
+        // like the two fees above — NOT the contingent arbitration fee below,
+        // despite the similar name. See lib/estimator/fees.ts's
+        // disputeInsurancePremiumPct.
+        dispute_insurance_premium_usdc: Number(result.session.dispute_insurance_premium_usdc ?? 0),
         // Contingent — shown alongside, never folded into guaranteed_total_usdc.
         disclosed_contingent_fee_pct: contingentPct,
         contingent_disclosure: contingentPct

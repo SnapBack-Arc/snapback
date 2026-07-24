@@ -256,6 +256,7 @@ export async function submitQuoteRequest(
       seller_cost_estimate_usdc: quote.seller_cost_estimate_usdc,
       happy_path_fee_usdc: quote.happy_path_fee_usdc,
       validation_fee_usdc: quote.validation_fee_usdc,
+      dispute_insurance_premium_usdc: quote.dispute_insurance_premium_usdc,
       guaranteed_total_usdc: quote.guaranteed_total_usdc,
       disclosed_contingent_fee_pct: quote.disclosed_contingent_fee_pct,
       matched_listing_ids: quote.matched_listing_ids as never,
@@ -294,6 +295,8 @@ export type CreditResult = {
   platform_fee_usdc: number;
   /** Fixed fee recovering the validator's real LLM-call cost, routed to Treasury. */
   validation_fee_usdc: number;
+  /** Unconditional, non-refundable — funds the full-refund guarantee on a buyer-won dispute. */
+  dispute_insurance_premium_usdc: number;
   /** Held at Treasury pending dispute outcome — see settleDisputeContingency. */
   dispute_contingency_usdc: number;
 };
@@ -307,12 +310,14 @@ export type CreditResult = {
  * contingency used to only ever become `payments` rows marked
  * released/escrowed with no matching on-chain transfer — Treasury's real
  * balance stayed 0 no matter how much "revenue" the dashboard attributed to
- * it. All three are now collected for real in a single ERC-20 transfer
- * (buyer -> Treasury), alongside the existing on-chain escrow lock. The
- * happy-path and validation fees are unconditional, so they're marked
- * `released` immediately. The contingency is refundable (clean completion or
- * a buyer-won dispute), so it's marked `escrowed` — settled for real later by
- * disputes/service.ts's settleDisputeContingency / sweepUncontestedContingencies.
+ * it. All four fee components (the three above plus the dispute-insurance
+ * premium added later) are now collected for real in a single ERC-20
+ * transfer (buyer -> Treasury), alongside the existing on-chain escrow lock.
+ * The happy-path fee, validation fee, and dispute-insurance premium are all
+ * unconditional, so they're marked `released` immediately. The contingency
+ * is refundable (clean completion or a buyer-won dispute), so it's marked
+ * `escrowed` — settled for real later by disputes/service.ts's
+ * settleDisputeContingency / sweepUncontestedContingencies.
  */
 export async function creditSessionToTask(
   sessionId: string,
@@ -343,11 +348,14 @@ export async function creditSessionToTask(
   const guaranteedTotal = Number(session.guaranteed_total_usdc ?? 0);
   const platformFee = Number(session.happy_path_fee_usdc ?? 0);
   const validationFee = Number(session.validation_fee_usdc ?? 0);
+  const disputeInsurancePremium = Number(session.dispute_insurance_premium_usdc ?? 0);
   const contingentPct = session.disclosed_contingent_fee_pct;
   const jobCost = Number(session.seller_cost_estimate_usdc ?? 0);
   const contingencyUsdc = Number(((Number(contingentPct) || 0) * jobCost).toFixed(6));
 
-  const totalRealFee = Number((platformFee + validationFee + contingencyUsdc).toFixed(6));
+  const totalRealFee = Number(
+    (platformFee + validationFee + disputeInsurancePremium + contingencyUsdc).toFixed(6),
+  );
 
   if (totalRealFee > 0) {
     const treasury = await ensureTreasuryWallet();
@@ -396,6 +404,27 @@ export async function creditSessionToTask(
       });
     }
 
+    // Unconditional and non-refundable, same as platform/validation fee above
+    // — NOT the contingent holdback below despite the similar name. Funds
+    // the full-refund guarantee on a buyer-won standard dispute; see
+    // lib/estimator/fees.ts's disputeInsurancePremiumPct for the sizing math.
+    if (disputeInsurancePremium > 0) {
+      await supabase.from("payments").insert({
+        task_id: taskId,
+        from_wallet_id: session.payer_wallet_id,
+        kind: "dispute_insurance_premium",
+        status: "released",
+        amount_usdc: disputeInsurancePremium,
+        tx_hash: txHash,
+        chain_id: ARC_CHAIN_ID,
+        metadata: {
+          estimator_session_id: sessionId,
+          treasury_address: treasury.address,
+          reason: "dispute_insurance_premium",
+        },
+      });
+    }
+
     // Held, not kept — refunded on clean completion or a buyer-won dispute,
     // kept as real Treasury revenue only on a buyer-lost dispute.
     if (contingencyUsdc > 0) {
@@ -437,6 +466,7 @@ export async function creditSessionToTask(
     remaining_due_usdc: Math.max(0, guaranteedTotal - quoteFeeCredit),
     platform_fee_usdc: platformFee,
     validation_fee_usdc: validationFee,
+    dispute_insurance_premium_usdc: disputeInsurancePremium,
     dispute_contingency_usdc: contingencyUsdc,
   };
 }
@@ -509,6 +539,7 @@ async function createSession(
       seller_cost_estimate_usdc: quote.seller_cost_estimate_usdc,
       happy_path_fee_usdc: quote.happy_path_fee_usdc,
       validation_fee_usdc: quote.validation_fee_usdc,
+      dispute_insurance_premium_usdc: quote.dispute_insurance_premium_usdc,
       guaranteed_total_usdc: quote.guaranteed_total_usdc,
       disclosed_contingent_fee_pct: quote.disclosed_contingent_fee_pct,
       matched_listing_ids: quote.matched_listing_ids as never,

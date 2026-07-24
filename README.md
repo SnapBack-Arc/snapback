@@ -105,7 +105,7 @@ category is no longer guaranteed to sail through on the first attempt.
 
 ### Fee model (Phase 4)
 
-Every quote is fee-inclusive (`src/lib/estimator/fees.ts`), three components
+Every quote is fee-inclusive (`src/lib/estimator/fees.ts`), four components
 folded into or disclosed alongside the headline `guaranteed_total_usdc`:
 
 - **Platform fee** — 0.075% of the seller's quoted job cost (`happyPathFeePct`),
@@ -113,20 +113,33 @@ folded into or disclosed alongside the headline `guaranteed_total_usdc`:
 - **Validation fee** — a flat $0.03 (`validationFeeUsdc`), recovering the real
   cost of the buyer-agent validator's LLM call. Charged on every task
   regardless of approve/reject, since that call always runs exactly once.
+- **Dispute-insurance premium** — a small, disclosed, provisional % of the
+  seller cost estimate (`disputeInsurancePremiumPct`,
+  `ESTIMATOR_DISPUTE_INSURANCE_PREMIUM_PCT`), unconditional and never
+  refunded, funding the platform's full-refund guarantee on a buyer-won
+  standard dispute. Real Claude+Parallel execution cost
+  (`src/lib/agents/research-sourcing.ts`) is spent immediately at delivery
+  time, before any dispute exists — a buyer-won standard dispute refunds the
+  entire job-cost escrow (including its 1.5x cost buffer) on-chain, and that
+  real infra spend is never recovered. Sized from a genuinely thin sample (8
+  real disputes total; 37.5% organic buyer-win rate) against the buffer's
+  own ~33.3% break-even rate — see the function's docblock for the exact
+  math. Meant to be revised once real dispute volume grows past single
+  digits, not a permanent number.
 - **Dispute contingency** — 2% of job cost for jobs under $50 seller-cost-estimate,
   1% at or above it (`arbitrationFeePctMicro`/`arbitrationFeePctLarge`,
   threshold `microTxThresholdUsdc`). Disclosed but never folded into
   `guaranteed_total_usdc`; held as a refundable escrow holdback rather than
   charged outright.
 
-All three are collected as **one real Circle transfer, buyer → Treasury**, at
+All four are collected as **one real Circle transfer, buyer → Treasury**, at
 task-funding time — not just `payments` rows with no matching on-chain
 movement (`creditSessionToTask` in `src/lib/estimator/service.ts`). The
-platform and validation fees are unconditional and marked `released`
-immediately; the contingency is marked `escrowed` and settled for real later —
-refunded in full on clean completion or a buyer-won dispute, kept as real
-Treasury revenue only on a buyer-lost dispute
-(`settleDisputeContingency`/`sweepUncontestedContingencies` in
+platform fee, validation fee, and dispute-insurance premium are all
+unconditional and marked `released` immediately; the contingency is marked
+`escrowed` and settled for real later — refunded in full on clean completion
+or a buyer-won dispute, kept as real Treasury revenue only on a buyer-lost
+dispute (`settleDisputeContingency`/`sweepUncontestedContingencies` in
 `src/lib/disputes/service.ts`).
 
 ### Dispute resolution: the real judge panel

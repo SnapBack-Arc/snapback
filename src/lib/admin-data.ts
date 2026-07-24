@@ -153,6 +153,9 @@ export async function getTreasuryOverview(): Promise<TreasuryOverview> {
 
   const platformFees = sum((p) => p.kind === "platform_fee" && p.status === "released");
   const validationFees = sum((p) => p.kind === "validation_fee" && p.status === "released");
+  const disputeInsurancePremiums = sum(
+    (p) => p.kind === "dispute_insurance_premium" && p.status === "released",
+  );
   const filingFeesForfeited = sum((p) => p.kind === "filing_fee" && p.status === "released");
   const contingenciesForfeited = sum((p) => p.kind === "dispute_contingency" && p.status === "released");
   const arbitrationFees = sum((p) => p.kind === "judge_fee");
@@ -211,6 +214,13 @@ export async function getTreasuryOverview(): Promise<TreasuryOverview> {
   const revenueLines: RevenueLine[] = [
     { label: "Platform fees (happy-path skim)", total_usdc: platformFees.total, count: platformFees.count },
     { label: "Validation fees", total_usdc: validationFees.total, count: validationFees.count },
+    {
+      label: "Dispute-insurance premiums",
+      total_usdc: disputeInsurancePremiums.total,
+      count: disputeInsurancePremiums.count,
+      note:
+        "Unconditional and non-refundable, same as the two fees above — funds the full-refund guarantee on a buyer-won standard dispute. Rate is provisional (ESTIMATOR_DISPUTE_INSURANCE_PREMIUM_PCT), sized from a thin sample (8 real disputes) — see lib/estimator/fees.ts.",
+    },
     {
       label: "Forfeited dispute/contest filing fees",
       total_usdc: filingFeesForfeited.total,
@@ -277,6 +287,7 @@ export async function getTreasuryOverview(): Promise<TreasuryOverview> {
   const totalKeptRevenueUsdc =
     platformFees.total +
     validationFees.total +
+    disputeInsurancePremiums.total +
     filingFeesForfeited.total +
     contingenciesForfeited.total +
     arbitrationFees.total +
@@ -311,7 +322,7 @@ export async function getTreasuryOverview(): Promise<TreasuryOverview> {
     insurancePoolBalanceUsdc,
     onChainVsLedgerDiscrepancyUsdc,
     discrepancyNote:
-      "As of this session, platform fees, validation fees, dispute-contingency refunds and forfeitures, filing-fee refunds and forfeitures, and insurance-pool payouts are all real Circle transfers to/from this Treasury wallet — not ledger-only bookkeeping, and every one of them (including the sweep-path contingency refund) is now retry-safe against a lost response. One thing this comparison still can't account for: gas — Arc's native gas token is USDC itself, and every real transfer Treasury initiates spends some, with no line anywhere tracking it (see Gas Station spend below). A nonzero discrepancy today is no longer expected by default the way it used to be — worth checking directly: a settlement_failed dispute with a leg stuck at 'submitted' (see 'Disputes in progress' below), or a 'Sweep-path refunds failed/stuck pending' line above with a nonzero count, both mean a real transaction may be in flight or genuinely stuck with no confirmed outcome yet.",
+      "As of this session, platform fees, validation fees, dispute-insurance premiums, dispute-contingency refunds and forfeitures, filing-fee refunds and forfeitures, and insurance-pool payouts are all real Circle transfers to/from this Treasury wallet — not ledger-only bookkeeping, and every one of them (including the sweep-path contingency refund) is now retry-safe against a lost response. One thing this comparison still can't account for: gas — Arc's native gas token is USDC itself, and every real transfer Treasury initiates spends some, with no line anywhere tracking it (see Gas Station spend below). A nonzero discrepancy today is no longer expected by default the way it used to be — worth checking directly: a settlement_failed dispute with a leg stuck at 'submitted' (see 'Disputes in progress' below), or a 'Sweep-path refunds failed/stuck pending' line above with a nonzero count, both mean a real transaction may be in flight or genuinely stuck with no confirmed outcome yet.",
     sweepFeed: (sweepFeed ?? []) as PaymentRow[],
   };
 }
