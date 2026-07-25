@@ -35,14 +35,3 @@ export async function getUsdcBalance(address: Address) {
   });
   return { raw, formatted: formatUnits(raw, USDC_DECIMALS) };
 }
-
-/** ERC-20 USDC allowance granted by `owner` to `spender` (6 decimals). */
-export async function getUsdcAllowance(owner: Address, spender: Address) {
-  const raw = await publicClient.readContract({
-    address: ARC_USDC_ADDRESS,
-    abi: erc20Abi,
-    functionName: "allowance",
-    args: [owner, spender],
-  });
-  return { raw, formatted: formatUnits(raw, USDC_DECIMALS) };
-}

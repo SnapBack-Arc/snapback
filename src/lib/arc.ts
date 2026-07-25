@@ -21,9 +21,6 @@ export const ARC_RPC_URL =
 export const ARC_EXPLORER_URL =
   process.env.NEXT_PUBLIC_ARC_EXPLORER_URL ?? "https://testnet.arcscan.app";
 
-export const ARC_FAUCET_URL =
-  process.env.NEXT_PUBLIC_ARC_FAUCET_URL ?? "https://faucet.circle.com";
-
 /** ERC-20 USDC interface over the native balance. 6 decimals. */
 export const ARC_USDC_ADDRESS = (process.env.NEXT_PUBLIC_ARC_USDC_ADDRESS ??
   "0x3600000000000000000000000000000000000000") as Address;
@@ -31,13 +28,6 @@ export const ARC_USDC_ADDRESS = (process.env.NEXT_PUBLIC_ARC_USDC_ADDRESS ??
 /** Circle Gateway contracts on Arc Testnet (CCTP-style domain 26). */
 export const ARC_GATEWAY_WALLET = (process.env.NEXT_PUBLIC_ARC_GATEWAY_WALLET ??
   "0x0077777d7EBA4688BDeF3E311b846F25870A19B9") as Address;
-
-export const ARC_GATEWAY_MINTER = (process.env.NEXT_PUBLIC_ARC_GATEWAY_MINTER ??
-  "0x0022222ABE238Cc2C7Bb1f21003F0a260052475B") as Address;
-
-export const ARC_GATEWAY_DOMAIN = Number(
-  process.env.NEXT_PUBLIC_ARC_GATEWAY_DOMAIN ?? "26",
-);
 
 /** Decimals for the native gas token (USDC-as-gas). */
 export const ARC_NATIVE_DECIMALS = 18;
@@ -72,11 +62,6 @@ export const arcTestnet = defineChain({
 /** Build a block-explorer link for a transaction hash. */
 export function explorerTxUrl(hash: string): string {
   return `${ARC_EXPLORER_URL}/tx/${hash}`;
-}
-
-/** Build a block-explorer link for an address. */
-export function explorerAddressUrl(address: string): string {
-  return `${ARC_EXPLORER_URL}/address/${address}`;
 }
 
 /** Minimal ERC-20 ABI covering balance/decimals/allowance/approve/transfer. */
