@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { redirect } from "next/navigation";
 import LoginForm from "@/components/LoginForm";
 import { getSession } from "@/lib/session";
@@ -18,9 +19,31 @@ export default async function LoginPage() {
           </p>
         </div>
         <LoginForm />
-        <p className="text-center text-xs text-zinc-600">
-          Powered by Circle User-Controlled Wallets · Arc Testnet
-        </p>
+        <div className="space-y-6 text-center">
+          <p className="text-xs text-zinc-600">
+            Powered by Circle User-Controlled Wallets · Arc Testnet
+          </p>
+          {/*
+            Official Arc "Built on" badge — white lockup (public/arc-logo-white.png,
+            from Circle's own Arc_Logos.zip brand asset kit), the correct variant for
+            this page's dark (zinc-950) background. Unmodified, undistorted (width/
+            height preserve the source's exact 500:171 aspect ratio), rendered at
+            52px height (above the 50px minimum, kept close to the floor and
+            monochrome/muted so it stays secondary to the SnapBack wordmark above).
+            space-y-6 above gives it ~24px of clear space from the text line, and
+            nothing else sits beside or below it, comfortably clearing Arc's "1x
+            inner-arch-height" clear-space rule on every side.
+          */}
+          <div className="flex justify-center">
+            <Image
+              src="/arc-logo-white.png"
+              alt="Built on Arc"
+              width={152}
+              height={52}
+              priority
+            />
+          </div>
+        </div>
       </div>
     </main>
   );
