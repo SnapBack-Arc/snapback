@@ -4,6 +4,7 @@ import { createServiceSupabase } from "@/lib/supabase/server";
 import { getUsdcBalance } from "@/lib/viem";
 import { getGatewayBalance } from "@/lib/gateway";
 import { getInsurancePoolBalance } from "@/lib/admin-actions";
+import { estimateCallCostUsd } from "@/lib/llm-cost";
 import type { LegState } from "@/lib/disputes/settlement";
 import type {
   PaymentRow,
@@ -378,6 +379,80 @@ export async function getParallelSpendOverview(): Promise<ParallelSpendOverview>
     failedPaymentsCount: failed.length,
     recentPayments: all.slice(0, 50) as PaymentRow[],
   };
+}
+
+export type LlmCallCostRow = {
+  label: string;
+  callCount: number;
+  /** Null when no call in this bucket had both a real usage row and a known price for its model. */
+  avgCostUsd: number | null;
+};
+
+/**
+ * Real average cost per Claude call type, computed from the token usage
+ * logged on judge_votes.usage / validations.usage (see supabase/migrations/
+ * 20260725043613_llm_call_usage.sql and lib/llm-cost.ts). Deliberately
+ * small — three rows, not a new page — since this exists to answer "what
+ * does a dispute/validation/delivery actually cost us," not to be a full
+ * cost-analytics surface.
+ */
+export async function getLlmCallCostOverview(): Promise<LlmCallCostRow[]> {
+  const supabase = createServiceSupabase();
+
+  const { data: votes } = await supabase
+    .from("judge_votes")
+    .select("model, usage")
+    .not("usage", "is", null);
+
+  const judgeCosts = (votes ?? [])
+    .map((v) => estimateCallCostUsd(v.model ?? "", v.usage as { input_tokens: number; output_tokens: number } | null))
+    .filter((c): c is number => c !== null);
+
+  const { data: validations } = await supabase
+    .from("validations")
+    .select("usage")
+    .not("usage", "is", null);
+
+  const validatorCosts: number[] = [];
+  const researchSourcingCosts: number[] = [];
+  for (const row of validations ?? []) {
+    const usage = row.usage as {
+      validator?: { input_tokens: number; output_tokens: number };
+      research_sourcing?: {
+        research: { input_tokens: number; output_tokens: number };
+        structure: { input_tokens: number; output_tokens: number };
+      } | null;
+    } | null;
+    if (!usage) continue;
+
+    // The validator always runs on claude-opus-4-8 — see lib/validator.ts.
+    const validatorCost = estimateCallCostUsd("claude-opus-4-8", usage.validator);
+    if (validatorCost !== null) validatorCosts.push(validatorCost);
+
+    if (usage.research_sourcing) {
+      // Both of Research & Sourcing's calls also run on claude-opus-4-8 —
+      // see lib/agents/research-sourcing.ts. Summed as one call (one
+      // delivery run), not two separate rows.
+      const researchCost = estimateCallCostUsd("claude-opus-4-8", usage.research_sourcing.research);
+      const structureCost = estimateCallCostUsd("claude-opus-4-8", usage.research_sourcing.structure);
+      if (researchCost !== null && structureCost !== null) {
+        researchSourcingCosts.push(researchCost + structureCost);
+      }
+    }
+  }
+
+  const avg = (costs: number[]): number | null =>
+    costs.length ? costs.reduce((s, c) => s + c, 0) / costs.length : null;
+
+  return [
+    { label: "Judge panel (per vote)", callCount: judgeCosts.length, avgCostUsd: avg(judgeCosts) },
+    { label: "Validator (per run)", callCount: validatorCosts.length, avgCostUsd: avg(validatorCosts) },
+    {
+      label: "Research & Sourcing (per delivery)",
+      callCount: researchSourcingCosts.length,
+      avgCostUsd: avg(researchSourcingCosts),
+    },
+  ];
 }
 
 export type AdminUserRow = {

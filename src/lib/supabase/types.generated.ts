@@ -132,6 +132,7 @@ export type Database = {
           dispute_kind: Database["public"]["Enums"]["dispute_kind"]
           educational_feedback: Json | null
           evidence: Json
+          evidence_window_deadline: string | null
           filing_fee_payment_id: string | null
           filing_fee_usdc: number | null
           id: string
@@ -152,6 +153,7 @@ export type Database = {
           dispute_kind?: Database["public"]["Enums"]["dispute_kind"]
           educational_feedback?: Json | null
           evidence?: Json
+          evidence_window_deadline?: string | null
           filing_fee_payment_id?: string | null
           filing_fee_usdc?: number | null
           id?: string
@@ -172,6 +174,7 @@ export type Database = {
           dispute_kind?: Database["public"]["Enums"]["dispute_kind"]
           educational_feedback?: Json | null
           evidence?: Json
+          evidence_window_deadline?: string | null
           filing_fee_payment_id?: string | null
           filing_fee_usdc?: number | null
           id?: string
@@ -452,6 +455,7 @@ export type Database = {
           model: string | null
           rationale: string | null
           tier: number | null
+          usage: Json | null
           weight: number
         }
         Insert: {
@@ -464,6 +468,7 @@ export type Database = {
           model?: string | null
           rationale?: string | null
           tier?: number | null
+          usage?: Json | null
           weight?: number
         }
         Update: {
@@ -476,6 +481,7 @@ export type Database = {
           model?: string | null
           rationale?: string | null
           tier?: number | null
+          usage?: Json | null
           weight?: number
         }
         Relationships: [
@@ -902,6 +908,7 @@ export type Database = {
           sla_pass: boolean
           task_id: string
           task_pass: boolean
+          usage: Json | null
         }
         Insert: {
           created_at?: string
@@ -916,6 +923,7 @@ export type Database = {
           sla_pass: boolean
           task_id: string
           task_pass: boolean
+          usage?: Json | null
         }
         Update: {
           created_at?: string
@@ -930,6 +938,7 @@ export type Database = {
           sla_pass?: boolean
           task_id?: string
           task_pass?: boolean
+          usage?: Json | null
         }
         Relationships: [
           {

@@ -11,11 +11,13 @@ import type { EducationalFeedback, RejectionFeedback } from "@/lib/disputes/feed
 import AgentRoster, { AGENT_COLOR, type AgentEntry } from "@/components/AgentRoster";
 import DeliverButton from "@/components/DeliverButton";
 import ContestDeliveryButton from "@/components/ContestDeliveryButton";
+import DisputeEvidenceForm from "@/components/DisputeEvidenceForm";
 import TaskLiveUpdates from "@/components/TaskLiveUpdates";
 import { isResearchSourcingListing } from "@/lib/listing-agents";
 import { LIVE_CATEGORY } from "@/lib/categories";
 import { contestWindowHours } from "@/lib/disputes/contest";
 import { computeContestFee } from "@/lib/disputes/service";
+import { maybeRunJudgePanelForDispute, type DisputeRebuttals } from "@/lib/disputes/evidence";
 import { resolveEscrowExpiredAt } from "@/lib/tasks/claim-expired";
 import ClaimExpiredButton from "@/components/ClaimExpiredButton";
 
@@ -338,11 +340,13 @@ function ContestResolutionFeedback({
 }
 
 function DisputeCard({
+  taskId,
   dispute,
   judges,
   isBuyer,
   resubmitHref,
 }: {
+  taskId: string;
   dispute: DisputeRow & { judge_votes: JudgeVoteRow[] };
   judges: JudgeVoteRow[];
   isBuyer: boolean;
@@ -354,6 +358,18 @@ function DisputeCard({
     !isContest && feedback && "resubmission_context" in feedback ? feedback : null;
   const contestFeedback =
     isContest && feedback && "rewritten_specs" in feedback ? feedback : null;
+
+  // Evidence window: both sides get a real chance to add context before the
+  // judge panel is invoked (lib/disputes/evidence.ts) — visible to the other
+  // party immediately on submission, matching this app's "disclosed, not
+  // hidden" ethos elsewhere.
+  const rebuttals = (dispute.evidence as { rebuttals?: DisputeRebuttals } | null)?.rebuttals ?? {};
+  const myRole: "buyer" | "seller" = isBuyer ? "buyer" : "seller";
+  const windowOpen =
+    dispute.status === "open" &&
+    !!dispute.evidence_window_deadline &&
+    isBeforeDeadline(new Date(dispute.evidence_window_deadline));
+  const canSubmitEvidence = windowOpen && !rebuttals[myRole];
 
   return (
     <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900 p-4">
@@ -391,6 +407,36 @@ function DisputeCard({
         <p className="mb-1 text-xs font-medium text-zinc-400">Judge panel</p>
         <JudgeVotesList votes={judges} />
       </div>
+
+      {(rebuttals.buyer || rebuttals.seller || canSubmitEvidence) && (
+        <div className="space-y-2 border-t border-zinc-800 pt-3">
+          <p className="text-xs font-medium text-zinc-400">Evidence</p>
+          {rebuttals.buyer && (
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3 text-xs">
+              <p className="mb-1 font-medium text-zinc-400">
+                Buyer&apos;s additional evidence — {formatDate(rebuttals.buyer.submitted_at)}
+              </p>
+              <p className="text-zinc-300">{rebuttals.buyer.text}</p>
+            </div>
+          )}
+          {rebuttals.seller && (
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3 text-xs">
+              <p className="mb-1 font-medium text-zinc-400">
+                Seller&apos;s rebuttal — {formatDate(rebuttals.seller.submitted_at)}
+              </p>
+              <p className="text-zinc-300">{rebuttals.seller.text}</p>
+            </div>
+          )}
+          {canSubmitEvidence && dispute.evidence_window_deadline && (
+            <DisputeEvidenceForm
+              taskId={taskId}
+              disputeId={dispute.id}
+              role={myRole}
+              deadlineIso={dispute.evidence_window_deadline}
+            />
+          )}
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-x-6 gap-y-1 border-t border-zinc-800 pt-2 text-xs text-zinc-500">
         {dispute.filing_fee_usdc !== null && (
@@ -509,6 +555,17 @@ export default async function TaskDetailPage({
   if (!task) notFound();
 
   const { stage, latestDispute } = deriveStage(task);
+
+  // Opportunistic trigger for the deferred judge panel (lib/disputes/
+  // evidence.ts) — a no-op unless this dispute is still 'open' and its
+  // evidence window has genuinely elapsed. This page is the "next natural
+  // touchpoint" that reliably revisits an open dispute (TaskLiveUpdates
+  // polls it every 6s while active), same pattern as
+  // sweepUncontestedContingencies elsewhere in this app.
+  if (latestDispute && latestDispute.status === "open") {
+    await maybeRunJudgePanelForDispute(latestDispute.id);
+  }
+
   const role = task.payer_wallet_id === wallet.id ? "Buyer" : "Seller";
   const taskMetadata = (task.metadata as Record<string, unknown> | null) ?? {};
   const jobId = taskMetadata.erc8183_job_id as string | undefined;
@@ -691,6 +748,7 @@ export default async function TaskDetailPage({
                 return (
                   <DisputeCard
                     key={d.id}
+                    taskId={task.id}
                     dispute={d}
                     judges={d.judge_votes}
                     isBuyer={role === "Buyer"}

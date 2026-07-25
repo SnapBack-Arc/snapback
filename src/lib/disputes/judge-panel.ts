@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { requireServerEnv } from "@/lib/env";
 import { createServiceSupabase } from "@/lib/supabase/server";
 import { resolveDispute } from "@/lib/disputes/service";
+import type { DisputeRebuttals } from "@/lib/disputes/evidence";
 import type { VoteChoice } from "@/lib/supabase/types";
 
 /**
@@ -39,6 +40,13 @@ import type { VoteChoice } from "@/lib/supabase/types";
  * lands in `settlement_failed`, not `voting` -- a genuine infra failure
  * (Circle API / chain), surfaced passively on /admin, not something this
  * function retries itself.
+ *
+ * Not called directly by either filing path anymore -- both
+ * validator-service.ts's auto-file and contest.ts's filePostApprovalContest
+ * only set disputes.evidence_window_deadline now, giving both sides a real
+ * window to submit evidence/a rebuttal (lib/disputes/evidence.ts) before
+ * anything invokes this. The sole caller is
+ * evidence.ts's maybeRunJudgePanelForDispute, once that window has elapsed.
  */
 
 type Effort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -100,7 +108,8 @@ function getClient(): Anthropic {
   return client;
 }
 
-type JudgeVerdict = { vote: "BUYER_WINS" | "SELLER_WINS"; reasoning: string };
+type TokenUsage = { input_tokens: number; output_tokens: number };
+type JudgeVerdict = { vote: "BUYER_WINS" | "SELLER_WINS"; reasoning: string; usage: TokenUsage };
 type JudgeOutcome = JudgeVerdict | { error: string };
 
 async function callJudge(identity: JudgeIdentity, evidence: string): Promise<JudgeVerdict> {
@@ -123,7 +132,11 @@ async function callJudge(identity: JudgeIdentity, evidence: string): Promise<Jud
   if (parsed.vote !== "BUYER_WINS" && parsed.vote !== "SELLER_WINS") {
     throw new Error(`Judge returned an unrecognized vote: ${JSON.stringify(parsed.vote)}`);
   }
-  return { vote: parsed.vote, reasoning: typeof parsed.reasoning === "string" ? parsed.reasoning : "" };
+  return {
+    vote: parsed.vote,
+    reasoning: typeof parsed.reasoning === "string" ? parsed.reasoning : "",
+    usage: { input_tokens: response.usage.input_tokens, output_tokens: response.usage.output_tokens },
+  };
 }
 
 async function attemptJudge(identity: JudgeIdentity, evidence: string): Promise<JudgeOutcome> {
@@ -149,6 +162,9 @@ function buildEvidence(params: {
   disputeReason: string;
   disputeReasonLabel: string;
   disputeSource: string;
+  /** Free-text submissions from lib/disputes/evidence.ts, submitted during the evidence window. Pure additional context -- not a new accept/reject rule -- so each section is only added when that party actually submitted something. */
+  buyerEvidence?: string | null;
+  sellerEvidence?: string | null;
 }): string {
   return [
     "BUYER'S ORIGINAL TASK REQUEST:",
@@ -166,6 +182,8 @@ function buildEvidence(params: {
     `DISPUTE SOURCE: ${params.disputeSource}`,
     `${params.disputeReasonLabel}:`,
     params.disputeReason,
+    ...(params.buyerEvidence ? ["", "BUYER'S ADDITIONAL EVIDENCE:", params.buyerEvidence] : []),
+    ...(params.sellerEvidence ? ["", "SELLER'S REBUTTAL:", params.sellerEvidence] : []),
   ].join("\n");
 }
 
@@ -228,6 +246,7 @@ async function writeVotes(
       model: identity.model,
       effort: identity.effort,
       tier,
+      usage: "error" in outcome ? null : (outcome.usage as never),
     };
   });
   const { error } = await supabase.from("judge_votes").insert(rows);
@@ -258,6 +277,8 @@ export async function runJudgePanel(disputeId: string): Promise<void> {
     .limit(1)
     .maybeSingle();
 
+  const rebuttals = (dispute.evidence as { rebuttals?: DisputeRebuttals } | null)?.rebuttals;
+
   const evidence = buildEvidence({
     taskRequest: (task.metadata as { criteria?: unknown } | null)?.criteria ?? task.description,
     sellerSla: (task.listings as { sla: unknown } | null)?.sla ?? {},
@@ -270,6 +291,8 @@ export async function runJudgePanel(disputeId: string): Promise<void> {
     disputeSource: isContest
       ? "buyer-initiated post-approval contest (validator had already approved; seller already paid)"
       : "auto-filed by the buyer-agent validator's rejection of the delivery",
+    buyerEvidence: rebuttals?.buyer?.text ?? null,
+    sellerEvidence: rebuttals?.seller?.text ?? null,
   });
 
   await supabase.from("disputes").update({ status: "voting" }).eq("id", disputeId);

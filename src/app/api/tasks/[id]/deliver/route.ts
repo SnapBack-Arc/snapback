@@ -54,7 +54,7 @@ export async function POST(
   }
 
   try {
-    const { deliverable, parallelPayment, parallelPaymentError } = await runResearchSourcingAgent(
+    const { deliverable, parallelPayment, parallelPaymentError, usage } = await runResearchSourcingAgent(
       task.description ?? task.title,
     );
 
@@ -94,7 +94,7 @@ export async function POST(
           },
     );
 
-    const result = await runValidation(taskId, deliverable);
+    const result = await runValidation(taskId, deliverable, usage);
     return NextResponse.json({ deliverable, result });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Delivery failed";

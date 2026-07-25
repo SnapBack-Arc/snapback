@@ -1,7 +1,7 @@
 import "server-only";
 import { createServiceSupabase } from "@/lib/supabase/server";
 import { computeContestFee, recordDisputeFiling } from "@/lib/disputes/service";
-import { runJudgePanel } from "@/lib/disputes/judge-panel";
+import { computeEvidenceWindowDeadline } from "@/lib/disputes/evidence";
 import { isWalletFlagged } from "@/lib/wallet-flags";
 
 /**
@@ -18,6 +18,11 @@ import { isWalletFlagged } from "@/lib/wallet-flags";
  * result (as opposed to a standard dispute, always system auto-filed on a
  * validator rejection — see validator-service.ts) — which is exactly why
  * it's the only path that charges computeContestFee at all.
+ *
+ * Like a standard dispute, filing here no longer invokes the judge panel
+ * synchronously — it sets evidence_window_deadline so both sides get a real
+ * window to submit evidence/a rebuttal (lib/disputes/evidence.ts) before
+ * anything invokes it.
  */
 
 /** Contest window after auto-approve — matches the existing accept window by default. */
@@ -89,6 +94,7 @@ export async function filePostApprovalContest(
       dispute_kind: "post_approval_contest",
       reason,
       evidence: { contest_reason: reason } as never,
+      evidence_window_deadline: computeEvidenceWindowDeadline(),
       validator_reasoning_snapshot: validation
         ? ({
             rationale: validation.rationale,
@@ -123,11 +129,6 @@ export async function filePostApprovalContest(
     buyerCircleWalletId: buyerWallet.circle_wallet_id,
     amountUsdc: feeUsdc,
   });
-
-  // Real AI judge panel -- the default resolution path. Synchronous, same
-  // as the standard-dispute call site in validator-service.ts; left to
-  // throw rather than swallowed, since resolving this contest is the point.
-  await runJudgePanel(disputeRow.id);
 
   return { dispute_id: disputeRow.id, fee_usdc: feeUsdc };
 }

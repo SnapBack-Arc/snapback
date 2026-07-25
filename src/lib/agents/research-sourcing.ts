@@ -101,12 +101,15 @@ function getClient(): Anthropic {
  * search results Claude found, so step 2 can be constrained to only cite
  * sources that genuinely came back from a search.
  */
+type TokenUsage = { input_tokens: number; output_tokens: number };
+
 async function research(
   taskDescription: string,
   parallelFinding: string | null,
 ): Promise<{
   reportText: string;
   sources: { title: string; url: string }[];
+  usage: TokenUsage;
 }> {
   const userContent = parallelFinding
     ? [
@@ -153,7 +156,11 @@ async function research(
     );
   }
 
-  return { reportText, sources };
+  return {
+    reportText,
+    sources,
+    usage: { input_tokens: response.usage.input_tokens, output_tokens: response.usage.output_tokens },
+  };
 }
 
 /**
@@ -166,7 +173,7 @@ async function structure(
   taskDescription: string,
   reportText: string,
   sources: { title: string; url: string }[],
-): Promise<ResearchDeliverable> {
+): Promise<{ deliverable: ResearchDeliverable; usage: TokenUsage }> {
   const response = await getClient().messages.create({
     model: "claude-opus-4-8",
     max_tokens: 4096,
@@ -198,7 +205,10 @@ async function structure(
   if (!text || text.type !== "text") {
     throw new Error("Research agent returned no structured output");
   }
-  return JSON.parse(text.text) as ResearchDeliverable;
+  return {
+    deliverable: JSON.parse(text.text) as ResearchDeliverable,
+    usage: { input_tokens: response.usage.input_tokens, output_tokens: response.usage.output_tokens },
+  };
 }
 
 /** Real Parallel payment evidence for one task run — null when the payment failed and Claude's web_search ran alone. */
@@ -214,6 +224,8 @@ export type ResearchSourcingResult = {
   parallelPayment: ParallelPaymentRecord | null;
   /** Set only when the real payment was attempted and failed — lets the caller's ledger row explain the $0. */
   parallelPaymentError: string | null;
+  /** Real response.usage from both Claude calls this agent makes — cost telemetry. */
+  usage: { research: TokenUsage; structure: TokenUsage };
 };
 
 export async function runResearchSourcingAgent(
@@ -240,7 +252,12 @@ export async function runResearchSourcingAgent(
     console.error(`[research-sourcing] Parallel payment failed, falling back to web_search only: ${parallelPaymentError}`);
   }
 
-  const { reportText, sources } = await research(taskDescription, parallelFinding);
-  const deliverable = await structure(taskDescription, reportText, sources);
-  return { deliverable, parallelPayment, parallelPaymentError };
+  const { reportText, sources, usage: researchUsage } = await research(taskDescription, parallelFinding);
+  const { deliverable, usage: structureUsage } = await structure(taskDescription, reportText, sources);
+  return {
+    deliverable,
+    parallelPayment,
+    parallelPaymentError,
+    usage: { research: researchUsage, structure: structureUsage },
+  };
 }

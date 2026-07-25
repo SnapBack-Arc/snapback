@@ -130,8 +130,8 @@ export async function revalidateTaskWithFreshResearch(
     throw new Error("This task isn't backed by the Research & Sourcing agent");
   }
 
-  const deliverable = await runResearchSourcingAgent(task.description ?? task.title);
-  const result = await runValidation(taskId, deliverable);
+  const { deliverable, usage } = await runResearchSourcingAgent(task.description ?? task.title);
+  const result = await runValidation(taskId, deliverable, usage);
   await logAdminAction({
     adminWalletId,
     action: "revalidate_task",

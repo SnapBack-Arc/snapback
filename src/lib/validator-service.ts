@@ -12,18 +12,30 @@ import {
 import { ARC_CHAIN_ID } from "@/lib/arc";
 import { isFlaggedForScrutiny } from "@/lib/disputes/service";
 import { generateRejectionFeedback } from "@/lib/disputes/feedback";
-import { runJudgePanel } from "@/lib/disputes/judge-panel";
+import { computeEvidenceWindowDeadline } from "@/lib/disputes/evidence";
 
 /**
  * Runs the buyer-agent validator for a delivered task and acts on the outcome:
  *   pass → auto-approve (release escrow to the seller)
- *   fail → auto-file a dispute (freezes escrow), then runs the real AI judge
- *          panel synchronously (see lib/disputes/judge-panel.ts) — this call
- *          resolves the dispute itself, automatically, every time: a clean
- *          tier-1/tier-2 vote or the deterministic tie-break if neither
- *          reaches a majority. No human is involved at any point.
+ *   fail → auto-file a dispute (freezes escrow) with an evidence window
+ *          (lib/disputes/evidence.ts) before the real AI judge panel ever
+ *          runs — no admin involved at any point, but no longer synchronous
+ *          with filing either: both sides get a real chance to add
+ *          evidence/a rebuttal first.
+ *
+
+ * `researchSourcingUsage`: real Claude token usage from the Research &
+ * Sourcing agent's two calls (lib/agents/research-sourcing.ts), when this
+ * delivery came from that agent — folded into the validations row's `usage`
+ * alongside the validator's own call, since both are real cost incurred on
+ * the same delivery. Every other seller passes nothing here (no matching
+ * Claude call to log).
  */
-export async function runValidation(taskId: string, deliverable: unknown) {
+export async function runValidation(
+  taskId: string,
+  deliverable: unknown,
+  researchSourcingUsage?: { research: { input_tokens: number; output_tokens: number }; structure: { input_tokens: number; output_tokens: number } },
+) {
   const supabase = createServiceSupabase();
 
   const { data: task, error } = await supabase
@@ -182,6 +194,10 @@ export async function runValidation(taskId: string, deliverable: unknown) {
     // payload against the original spec (previously only a hash column
     // existed here, and nothing wrote to it).
     deliverable: deliverable as never,
+    usage: {
+      validator: result.usage,
+      research_sourcing: researchSourcingUsage ?? null,
+    } as never,
   });
 
   let txId: string | undefined;
@@ -201,8 +217,9 @@ export async function runValidation(taskId: string, deliverable: unknown) {
     }
     await supabase.from("tasks").update({ status: "accepted", accepted_at: new Date().toISOString() }).eq("id", taskId);
   } else {
-    // Auto-file: freeze the escrow. The judge panel runs below, once the
-    // dispute row exists.
+    // Auto-file: freeze the escrow. Both sides now get an evidence window
+    // (lib/disputes/evidence.ts) before the judge panel is ever invoked --
+    // status stays 'open' here, not 'voting'.
     if (jobId && buyerCircleWalletId) {
       txId = await escrowAction(buyerCircleWalletId, "dispute(uint256,bytes32)", [
         jobId,
@@ -218,6 +235,7 @@ export async function runValidation(taskId: string, deliverable: unknown) {
         status: "open",
         reason: result.rationale,
         evidence: { failures: result.failures, auto_filed_by: "buyer_agent_validator" } as never,
+        evidence_window_deadline: computeEvidenceWindowDeadline(),
       })
       .select("id")
       .single();
@@ -253,14 +271,6 @@ export async function runValidation(taskId: string, deliverable: unknown) {
       } catch {
         // Leave educational_feedback null rather than fail the validation run.
       }
-
-      // Real AI judge panel -- the sole resolution path, no admin fallback.
-      // Runs synchronously, same as every other step in this function --
-      // there's no keeper/queue in this app. Left to throw: a failure here
-      // should surface, not be silently swallowed like the feedback
-      // generation above, since resolving the dispute is the point of this
-      // call, not a value-add on top of it.
-      await runJudgePanel(disputeRow.id);
     }
   }
 

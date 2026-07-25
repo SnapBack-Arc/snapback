@@ -1,5 +1,10 @@
 import Link from "next/link";
-import { getTreasuryOverview, listOpenDisputesForAdmin, getParallelSpendOverview } from "@/lib/admin-data";
+import {
+  getTreasuryOverview,
+  listOpenDisputesForAdmin,
+  getParallelSpendOverview,
+  getLlmCallCostOverview,
+} from "@/lib/admin-data";
 import { explorerTxUrl } from "@/lib/arc";
 import { baseExplorerTxUrl } from "@/lib/base";
 import { formatDate, formatUsdc } from "@/lib/format";
@@ -15,10 +20,11 @@ const LEG_LABELS: Record<string, string> = {
 };
 
 export default async function AdminTreasuryPage() {
-  const [data, openDisputes, parallelSpend] = await Promise.all([
+  const [data, openDisputes, parallelSpend, llmCosts] = await Promise.all([
     getTreasuryOverview(),
     listOpenDisputesForAdmin(),
     getParallelSpendOverview(),
+    getLlmCallCostOverview(),
   ]);
 
   return (
@@ -103,6 +109,35 @@ export default async function AdminTreasuryPage() {
       <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
         <h2 className="mb-1 text-sm font-semibold text-zinc-200">Gas Station spend (outflow)</h2>
         <p className="text-sm text-zinc-500">{data.gasSpendNote}</p>
+      </section>
+
+      <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
+        <h2 className="mb-1 text-sm font-semibold text-zinc-200">Real LLM call cost (sampled)</h2>
+        <p className="mb-4 text-xs text-zinc-500">
+          Average real cost per call, computed from actual response.usage token counts now logged on
+          judge_votes/validations (standard published Claude rates — see lib/llm-cost.ts). Empty until
+          calls made after this shipped accumulate.
+        </p>
+        <table className="w-full text-sm">
+          <thead className="text-left text-xs uppercase tracking-wide text-zinc-500">
+            <tr>
+              <th className="py-2">Call type</th>
+              <th>Sample size</th>
+              <th>Avg cost</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-800">
+            {llmCosts.map((row) => (
+              <tr key={row.label} className="text-zinc-300">
+                <td className="py-2 pr-4">{row.label}</td>
+                <td>{row.callCount}</td>
+                <td className="font-mono">
+                  {row.avgCostUsd === null ? "—" : `$${row.avgCostUsd.toFixed(4)}`}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </section>
 
       <section className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900 p-5">

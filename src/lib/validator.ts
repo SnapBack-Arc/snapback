@@ -47,6 +47,8 @@ export type ValidationResult = {
   /** Every entry here is, by construction, within what the seller's SLA covers. */
   failures: Failure[];
   rationale: string;
+  /** Real response.usage from this validator call — cost telemetry, see lib/disputes/judge-panel.ts's identical pattern. */
+  usage: { input_tokens: number; output_tokens: number };
 };
 
 const SCHEMA = {
@@ -179,5 +181,6 @@ export async function validateDelivery(params: {
     sla_pass: passBy("sla"),
     failures,
     rationale: parsed.rationale,
+    usage: { input_tokens: response.usage.input_tokens, output_tokens: response.usage.output_tokens },
   };
 }
