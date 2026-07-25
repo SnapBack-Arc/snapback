@@ -470,17 +470,34 @@ the app enforces or sets it automatically.
   than 10 minutes) so it's visible rather than silently stuck — but nothing
   clears it automatically today; that would need a real recovery path
   (e.g. an admin action to re-attempt or manually resolve), not yet built.
-- **Genuine buyer wins are hard to reach organically through the real
-  contest path.** The judge panel's system prompt holds that "the seller is
-  accountable ONLY for what their SLA actually promised" — combined with the
-  current Research & Sourcing SLA's low bar (≥3 sources, 6-hour turnaround),
-  almost any competent delivery clears it, so judges consistently treat a
-  buyer's broader expectation as scope creep rather than a seller failure.
-  Several live-tested contests this week, across a range of framings (a
-  missing item, a strict format requirement, two genuine spec-ambiguity
-  arguments), all resolved unanimously in the seller's favor at tier 1. This
-  is disclosed here rather than hidden, consistent with the honesty
-  principle used throughout this project.
+- **Genuine buyer wins are still hard to reach organically for most contest
+  framings, though one real path now exists.** The judge panel's system
+  prompt holds that "the seller is accountable ONLY for what their SLA
+  actually promised" — combined with the current Research & Sourcing SLA's
+  low bar (≥3 sources, 6-hour turnaround), almost any competent delivery
+  clears it, so judges consistently treat a buyer's broader expectation
+  (a missing item, a stricter format, a stronger reading of scope) as scope
+  creep rather than a seller failure. Several live-tested contests, across a
+  range of such framings, all resolved unanimously in the seller's favor at
+  tier 1 — including one pre-dating the source-independence fix below, where
+  a buyer correctly identified a distributor/manufacturer overlap but the
+  validator and judge panel had no structured way to see it yet and ruled
+  for the seller anyway.
+  **That specific gap is now closed** — the source-independence fix
+  (`source_role`/`overlaps_with`, see above) gives both the validator and the
+  judge panel a real, structural way to find for the buyer when the SLA's
+  `min_distinct_sources` is genuinely violated by disclosed overlap,
+  confirmed live: an auto-filed standard dispute on the post-fix delivery
+  correctly failed `min_distinct_sources`, and the judge panel reached the
+  identical unanimous buyer-win conclusion independently. That confirmed run
+  was a validator-auto-filed standard dispute, not yet a buyer-initiated
+  post-approval contest — but the judge panel applies the identical grouping
+  rule to both dispute kinds, so the same argument should carry the same way
+  through the contest path once a buyer raises it there. Every other
+  framing (format, completeness-beyond-SLA, broader scope) is unaffected by
+  this fix and remains hard to win organically. This is disclosed here
+  rather than hidden, consistent with the honesty principle used throughout
+  this project.
 
 ---
 
