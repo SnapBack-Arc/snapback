@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { DEMO_TEST_ACCOUNT_EMAIL } from "@/lib/demo/config";
 
 type Phase = "idle" | "sending" | "awaiting_otp" | "finishing";
@@ -19,14 +20,35 @@ const DEMO_MODE = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
 // reads as a working login rather than a shortcut.
 const MOCK_OTP_DIGITS = ["4", "8", "2", "9", "1", "3"];
 
-// testAccount only — this is the live demo walkthrough's single account.
-// newAccount@snapback.com (new-user onboarding/wallet-generation) still
-// exists in full behind this: /api/auth/demo, resetDemoNewAccount(), and
-// the real wallet-generation flow it triggers are all untouched. It's just
-// not offered here — a freshly-generated, unfunded wallet has nothing to
-// show in a live walkthrough. See README's demo-mode section for why.
-const DEMO_ACCOUNTS: { value: DemoPersona; email: string; description: string }[] = [
-  { value: "test", email: DEMO_TEST_ACCOUNT_EMAIL, description: "existing activity" },
+type DemoOption = {
+  key: string;
+  persona: DemoPersona;
+  email: string;
+  label: string;
+  destination: string;
+};
+
+// There is only ONE real demo account/wallet (testAccount@snapback.com,
+// persona "test") — both options below authenticate as that same account
+// via the same /api/auth/demo call. The second option is just a more
+// discoverable entry point to the same requireAdmin()-gated /admin access
+// that already exists via the corner shortcut in the root layout; it is
+// not a second identity and grants nothing new.
+const DEMO_ACCOUNTS: DemoOption[] = [
+  {
+    key: "test-dashboard",
+    persona: "test",
+    email: DEMO_TEST_ACCOUNT_EMAIL,
+    label: `${DEMO_TEST_ACCOUNT_EMAIL} — existing activity`,
+    destination: "/dashboard",
+  },
+  {
+    key: "test-admin",
+    persona: "test",
+    email: DEMO_TEST_ACCOUNT_EMAIL,
+    label: "testAccount (admin view)",
+    destination: "/admin",
+  },
 ];
 
 export default function LoginForm() {
@@ -40,16 +62,18 @@ export default function LoginForm() {
   // Demo mode only — the email field becomes a dropdown of DEMO_ACCOUNTS
   // instead of free text. Kept as separate state from `email` so the
   // real-OTP path above is untouched either way.
-  const [demoSelection, setDemoSelection] = useState<DemoPersona | "">("");
-  const [demoPersona, setDemoPersona] = useState<DemoPersona | null>(null);
+  const [demoSelection, setDemoSelection] = useState<string>("");
+  const [demoOption, setDemoOption] = useState<DemoOption | null>(null);
   const [demoPhase, setDemoPhase] = useState<DemoPhase>("idle");
 
   const busy = phase === "sending" || phase === "finishing";
 
-  function selectDemoAccount(persona: DemoPersona) {
+  function selectDemoAccount(key: string) {
+    const option = DEMO_ACCOUNTS.find((a) => a.key === key);
+    if (!option) return;
     setError(null);
-    setDemoSelection(persona);
-    setDemoPersona(persona);
+    setDemoSelection(key);
+    setDemoOption(option);
     setDemoPhase("sending");
     // Purely cosmetic beat mirroring the real flow's brief "Sending code…"
     // moment before the OTP entry step appears — no network call here.
@@ -58,27 +82,27 @@ export default function LoginForm() {
 
   function cancelDemoOtp() {
     setDemoPhase("idle");
-    setDemoPersona(null);
+    setDemoOption(null);
     setDemoSelection("");
   }
 
   async function confirmDemoOtp() {
-    if (!demoPersona) return;
+    if (!demoOption) return;
     setDemoPhase("confirming");
     try {
       const res = await fetch("/api/auth/demo", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ persona: demoPersona }),
+        body: JSON.stringify({ persona: demoOption.persona }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? "Demo login failed");
-      router.push("/dashboard");
+      router.push(demoOption.destination);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Demo login failed");
       setDemoPhase("idle");
-      setDemoPersona(null);
+      setDemoOption(null);
       // Reset back to the placeholder so re-selecting the same option (which
       // wouldn't otherwise fire a change event) can retry.
       setDemoSelection("");
@@ -159,86 +183,132 @@ export default function LoginForm() {
     }
   }
 
+  if (DEMO_MODE && (demoPhase === "otp" || demoPhase === "confirming") && demoOption) {
+    return (
+      <DemoOtpScreen
+        email={demoOption.email}
+        confirming={demoPhase === "confirming"}
+        onConfirm={confirmDemoOtp}
+        onCancel={cancelDemoOtp}
+      />
+    );
+  }
+
   return (
-    <form onSubmit={onSubmit} className="w-full max-w-sm space-y-4">
-      <div className="space-y-1">
-        <label htmlFor="email" className="text-sm font-medium text-zinc-300">
-          Email
-        </label>
-        {DEMO_MODE ? (
-          <select
-            id="email"
-            required
-            value={demoSelection}
-            onChange={(e) => {
-              const persona = e.target.value as DemoPersona | "";
-              if (persona) selectDemoAccount(persona);
-            }}
-            disabled={demoPhase !== "idle"}
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-60"
-          >
-            <option value="" disabled>
-              {demoPhase === "sending" ? "Sending code…" : "Select a demo account"}
-            </option>
-            {DEMO_ACCOUNTS.map((account) => (
-              <option key={account.value} value={account.value}>
-                {account.email} — {account.description}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <input
-            id="email"
-            type="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@example.com"
-            disabled={busy}
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-60"
-          />
-        )}
-      </div>
+    <div className="w-full max-w-sm space-y-8">
+      <div className="space-y-6 rounded-2xl border border-[#ffffff1c] bg-[#111113cc] p-8 shadow-2xl backdrop-blur-[24px]">
+        <div className="flex flex-col items-center space-y-4 text-center">
+          <LogoMark />
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-[#fafafa]">
+              Snap<span className="text-[#10b981]">Back</span>
+            </h1>
+            <p className="mt-2 text-sm text-[#a1a1aa]">
+              Payment insurance for agent-to-agent work. Sign in to manage your coverage.
+            </p>
+          </div>
+        </div>
 
-      {DEMO_MODE ? (
-        <p className="text-xs text-zinc-500">
-          Demo mode: selecting an account walks through the same sign-in flow with a pre-filled verification code — no real email required.
-        </p>
-      ) : (
-        <>
-          <button
-            type="submit"
-            disabled={busy}
-            className="w-full rounded-lg bg-emerald-500 px-4 py-2 font-semibold text-zinc-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {phase === "sending"
-              ? "Sending code…"
-              : phase === "awaiting_otp"
-                ? "Enter the code in the popup"
-                : phase === "finishing"
-                  ? "Signing in…"
-                  : "Continue with email"}
-          </button>
+        <form onSubmit={onSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <label
+              htmlFor="email"
+              className="text-xs font-medium uppercase tracking-widest text-[#71717a]"
+            >
+              {DEMO_MODE ? "Select account" : "Email"}
+            </label>
+            {DEMO_MODE ? (
+              <select
+                id="email"
+                required
+                value={demoSelection}
+                onChange={(e) => {
+                  if (e.target.value) selectDemoAccount(e.target.value);
+                }}
+                disabled={demoPhase !== "idle"}
+                className="w-full rounded-xl border border-[#3f3f46] bg-[#18181b] px-3 py-2.5 text-sm text-[#fafafa] outline-none transition focus:border-[#10b981] disabled:opacity-60 font-[family-name:var(--font-login-mono)]"
+              >
+                <option value="" disabled>
+                  {demoPhase === "sending" ? "Sending code…" : "Select a demo account"}
+                </option>
+                {DEMO_ACCOUNTS.map((account) => (
+                  <option key={account.key} value={account.key}>
+                    {account.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                id="email"
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                disabled={busy}
+                className="w-full rounded-xl border border-[#3f3f46] bg-[#18181b] px-3 py-2.5 text-[#fafafa] outline-none transition focus:border-[#10b981] disabled:opacity-60"
+              />
+            )}
+          </div>
 
-          {phase === "awaiting_otp" && (
-            <p className="text-xs text-zinc-400">
-              A one-time code was emailed to you. Enter it in the Circle popup to
-              finish signing in.
+          {DEMO_MODE ? (
+            <p className="text-xs text-[#71717a]">
+              Demo mode: selecting an account walks through the same sign-in flow with a
+              pre-filled verification code — no real email required.
+            </p>
+          ) : (
+            <>
+              <button
+                type="submit"
+                disabled={busy}
+                className="w-full rounded-xl bg-[#10b981] px-4 py-2.5 font-semibold text-[#052e1f] transition hover:bg-[#34d399] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {phase === "sending"
+                  ? "Sending code…"
+                  : phase === "awaiting_otp"
+                    ? "Enter the code in the popup"
+                    : phase === "finishing"
+                      ? "Signing in…"
+                      : "Continue with email"}
+              </button>
+
+              {phase === "awaiting_otp" && (
+                <p className="text-xs text-[#a1a1aa]">
+                  A one-time code was emailed to you. Enter it in the Circle popup to
+                  finish signing in.
+                </p>
+              )}
+            </>
+          )}
+          {error && (
+            <p className="rounded-lg border border-[#7f1d1d77] bg-[#450a0a66] px-3 py-2 text-sm text-[#f87171]">
+              {error}
             </p>
           )}
-        </>
-      )}
-      {error && <p className="text-sm text-red-400">{error}</p>}
+        </form>
+      </div>
 
-      {DEMO_MODE && (demoPhase === "otp" || demoPhase === "confirming") && demoPersona && (
-        <DemoOtpDialog
-          email={DEMO_ACCOUNTS.find((a) => a.value === demoPersona)?.email ?? ""}
-          confirming={demoPhase === "confirming"}
-          onConfirm={confirmDemoOtp}
-          onCancel={cancelDemoOtp}
-        />
-      )}
-    </form>
+      <ArcFooter />
+    </div>
+  );
+}
+
+function LogoMark() {
+  return (
+    <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-[#ffffff14] bg-[#10b981]/10">
+      <svg
+        viewBox="0 0 24 24"
+        className="h-6 w-6"
+        fill="none"
+        stroke="#10b981"
+        strokeWidth={1.75}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3z" />
+        <path d="M9 12l2 2 4-4" />
+      </svg>
+    </div>
   );
 }
 
@@ -249,7 +319,7 @@ export default function LoginForm() {
  * bypasses real OTP entirely — this exists purely so the demo walks
  * through the same send-code / enter-code / confirm beats as a real login.
  */
-function DemoOtpDialog({
+function DemoOtpScreen({
   email,
   confirming,
   onConfirm,
@@ -261,12 +331,21 @@ function DemoOtpDialog({
   onCancel: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-sm space-y-4 rounded-xl border border-zinc-800 bg-zinc-900 p-6">
-        <div>
-          <h2 className="text-lg font-semibold text-white">Enter verification code</h2>
-          <p className="mt-1 text-sm text-zinc-400">
-            We sent a 6-digit code to <span className="text-zinc-200">{email}</span>.
+    <div className="w-full max-w-sm space-y-8">
+      <h1 className="text-center text-2xl font-semibold tracking-tight">
+        <span className="text-[#71717a]">Snap</span>
+        <span className="text-[#10b981]">Back</span>
+      </h1>
+
+      <div className="space-y-6 rounded-2xl border border-[#ffffff1c] bg-[#111113cc] p-8 shadow-2xl backdrop-blur-[24px]">
+        <div className="space-y-1 text-center">
+          <h2 className="text-lg font-semibold text-[#fafafa]">Enter verification code</h2>
+          <p className="text-sm text-[#a1a1aa]">
+            We sent a 6-digit code to{" "}
+            <span className="font-[family-name:var(--font-login-mono)] text-[#fafafa]">
+              {email}
+            </span>
+            .
           </p>
         </div>
 
@@ -274,7 +353,7 @@ function DemoOtpDialog({
           {MOCK_OTP_DIGITS.map((digit, i) => (
             <div
               key={i}
-              className="flex h-12 w-10 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-950 font-mono text-lg text-zinc-100"
+              className="flex h-12 w-10 items-center justify-center rounded-xl border border-[#ffffff14] bg-[#18181b73] font-[family-name:var(--font-login-mono)] text-lg text-[#fafafa] backdrop-blur-[28px]"
             >
               {digit}
             </div>
@@ -286,7 +365,7 @@ function DemoOtpDialog({
             type="button"
             onClick={onCancel}
             disabled={confirming}
-            className="flex-1 rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex-1 rounded-xl border border-[#3f3f46] px-4 py-2.5 text-sm font-medium text-[#a1a1aa] transition hover:bg-[#ffffff0a] disabled:cursor-not-allowed disabled:opacity-60"
           >
             Cancel
           </button>
@@ -294,11 +373,37 @@ function DemoOtpDialog({
             type="button"
             onClick={onConfirm}
             disabled={confirming}
-            className="flex-1 rounded-lg bg-emerald-500 px-4 py-2 font-semibold text-zinc-950 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex-1 rounded-xl bg-[#10b981] px-4 py-2.5 text-sm font-semibold text-[#052e1f] transition hover:bg-[#34d399] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {confirming ? "Signing in…" : "Confirm"}
           </button>
         </div>
+      </div>
+
+      <ArcFooter />
+    </div>
+  );
+}
+
+function ArcFooter() {
+  return (
+    <div className="space-y-6 text-center">
+      <p className="text-xs text-[#52525b]">
+        Powered by Circle User-Controlled Wallets · Arc Testnet
+      </p>
+      {/*
+        Official Arc "Built on" badge — white lockup (public/arc-logo-white.png,
+        from Circle's own Arc_Logos.zip brand asset kit), the correct variant for
+        this page's dark background. Unmodified, undistorted (width/height
+        preserve the source's exact 500:171 aspect ratio), rendered at 52px
+        height (above the 50px minimum, kept close to the floor and
+        monochrome/muted so it stays secondary to the SnapBack wordmark above).
+        space-y-6 above gives it ~24px of clear space from the text line, and
+        nothing else sits beside or below it, comfortably clearing Arc's "1x
+        inner-arch-height" clear-space rule on every side.
+      */}
+      <div className="flex justify-center">
+        <Image src="/arc-logo-white.png" alt="Built on Arc" width={152} height={52} priority />
       </div>
     </div>
   );
