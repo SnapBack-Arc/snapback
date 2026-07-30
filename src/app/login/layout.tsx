@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Inter, JetBrains_Mono } from "next/font/google";
-import AuroraBackground from "./AuroraBackgroundClient";
+import AuroraBackground from "@/components/aurora/AuroraBackgroundClient";
 
 // Scoped to /login only — deliberately not added to the root layout, which
 // stays on Geist Sans/Mono for every other route.

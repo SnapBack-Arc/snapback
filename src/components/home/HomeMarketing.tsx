@@ -1,11 +1,13 @@
 import Link from "next/link";
-import { Inter } from "next/font/google";
+import { Inter, JetBrains_Mono } from "next/font/google";
+import AuroraBackground from "@/components/aurora/AuroraBackgroundClient";
 import JourneyDiagram from "./JourneyDiagram";
 
 // Scoped to this component only (next/font/google scopes to wherever its
 // className is applied) — not the root layout, so no other page's
-// typography changes. Matches the font used on the /login redesign.
+// typography changes. Matches the fonts used on the /login redesign.
 const inter = Inter({ subsets: ["latin"], variable: "--font-home-sans" });
+const jetbrainsMono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-home-mono" });
 
 const HOW_IT_WORKS = [
   {
@@ -75,7 +77,11 @@ const BUILT_ON = [
 // session with a wallet always gets TaskSubmissionFlow instead, unchanged.
 export default function HomeMarketing() {
   return (
-    <div className={`${inter.variable} min-h-screen bg-[#09090b] font-[family-name:var(--font-home-sans)] text-[#fafafa]`}>
+    <div
+      className={`${inter.variable} ${jetbrainsMono.variable} relative min-h-screen font-[family-name:var(--font-home-sans)] text-[#fafafa] antialiased`}
+    >
+      <AuroraBackground />
+      <div className="relative z-10">
       <header className="mx-auto flex max-w-6xl items-center justify-between px-8 py-6">
         <span className="text-lg font-semibold tracking-tight">
           Snap<span className="text-[#10b981]">Back</span>
@@ -124,7 +130,7 @@ export default function HomeMarketing() {
               key={item.step}
               className="space-y-3 rounded-2xl border border-[#ffffff14] bg-[#18181b73] p-6 backdrop-blur-[28px]"
             >
-              <div className="flex h-9 w-9 items-center justify-center rounded-full border border-[#10b981] bg-[#10b981]/10 text-sm font-semibold text-[#10b981]">
+              <div className="flex h-9 w-9 items-center justify-center rounded-full border border-[#10b981] bg-[#10b981]/10 text-sm font-semibold text-[#10b981] font-[family-name:var(--font-home-mono)]">
                 {item.step}
               </div>
               <h3 className="text-lg font-semibold text-[#fafafa]">{item.title}</h3>
@@ -189,6 +195,7 @@ export default function HomeMarketing() {
       <footer className="mx-auto max-w-6xl px-8 py-12 text-center text-xs text-[#52525b]">
         Powered by Circle User-Controlled Wallets · Arc Testnet
       </footer>
+      </div>
     </div>
   );
 }

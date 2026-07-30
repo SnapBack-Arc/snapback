@@ -30,6 +30,12 @@ function randomOrb(): Orb {
   };
 }
 
+/**
+ * Shared 8-orb randomized aurora background — used by /login and / (see
+ * AuroraBackgroundClient.tsx for the client-only dynamic wrapper each route
+ * mounts). Not part of the root layout: every route that wants it imports
+ * AuroraBackgroundClient explicitly in its own tree.
+ */
 export function AuroraBackground() {
   const [orbs, setOrbs] = useState<Orb[]>(() => Array.from({ length: 8 }, randomOrb));
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -52,7 +58,7 @@ export function AuroraBackground() {
 
   return (
     <div
-      className="login-aurora-bg fixed inset-0 z-0 overflow-hidden pointer-events-none"
+      className="aurora-bg fixed inset-0 z-0 overflow-hidden pointer-events-none"
       style={{ background: "#09090b" }}
     >
       {orbs.map((b, i) => (
@@ -71,7 +77,7 @@ export function AuroraBackground() {
         />
       ))}
       <div
-        className="login-aurora-grid absolute inset-0"
+        className="aurora-grid absolute inset-0"
         style={{
           backgroundImage:
             "linear-gradient(#ffffff14 1px, transparent 1px), linear-gradient(90deg, #ffffff14 1px, transparent 1px)",
