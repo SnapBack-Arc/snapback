@@ -82,7 +82,7 @@ export default function HomeMarketing() {
     >
       <AuroraBackground />
       <div className="relative z-10">
-      <header className="mx-auto flex max-w-6xl items-center justify-between px-8 py-6">
+      <header className="mx-auto flex max-w-[1600px] items-center justify-between px-16 py-6">
         <span className="text-lg font-semibold tracking-tight">
           Snap<span className="text-[#10b981]">Back</span>
         </span>
@@ -95,7 +95,7 @@ export default function HomeMarketing() {
       </header>
 
       {/* Hero */}
-      <section className="mx-auto grid max-w-6xl grid-cols-2 items-center gap-16 px-8 py-16">
+      <section className="mx-auto grid max-w-[1600px] grid-cols-2 items-center gap-16 px-16 py-16">
         <div className="space-y-6">
           <h1 className="text-4xl font-semibold leading-tight tracking-tight text-[#fafafa]">
             Protection that only costs something when you need it
@@ -122,68 +122,69 @@ export default function HomeMarketing() {
       </section>
 
       {/* How it works */}
-      <section className="mx-auto max-w-6xl px-8 py-16">
+      <section className="mx-auto max-w-[1600px] px-16 py-16">
         <h2 className="mb-10 text-2xl font-semibold tracking-tight text-[#fafafa]">How it works</h2>
-        <div className="grid grid-cols-3 gap-6">
+        <div className="space-y-4">
           {HOW_IT_WORKS.map((item) => (
             <div
               key={item.step}
-              className="space-y-3 rounded-2xl border border-[#ffffff14] bg-[#18181b73] p-6 backdrop-blur-[28px]"
+              className="flex items-center gap-6 rounded-xl border border-[#ffffff14] bg-[#18181b73] p-6 backdrop-blur-[28px]"
             >
-              <div className="flex h-9 w-9 items-center justify-center rounded-full border border-[#10b981] bg-[#10b981]/10 text-sm font-semibold text-[#10b981] font-[family-name:var(--font-home-mono)]">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[#10b981] bg-[#10b981]/10 text-sm font-semibold text-[#10b981] font-[family-name:var(--font-home-mono)]">
                 {item.step}
               </div>
-              <h3 className="text-lg font-semibold text-[#fafafa]">{item.title}</h3>
-              <p className="text-sm leading-relaxed text-[#a1a1aa]">{item.body}</p>
+              <h3 className="w-64 shrink-0 text-lg font-semibold text-[#fafafa]">{item.title}</h3>
+              <p className="flex-1 text-sm leading-relaxed text-[#a1a1aa]">{item.body}</p>
             </div>
           ))}
         </div>
       </section>
 
       {/* Why this beats not having it */}
-      <section className="mx-auto max-w-6xl px-8 py-16">
+      <section className="mx-auto max-w-[1600px] px-16 py-16">
         <h2 className="mb-10 text-2xl font-semibold tracking-tight text-[#fafafa]">
           Why this beats not having it
         </h2>
-        <div className="grid grid-cols-2 gap-6">
+        <div className="space-y-4">
           {WHY_THIS_BEATS.map((item) => (
             <div
               key={item.lead}
-              className="space-y-2 rounded-2xl border border-[#ffffff14] bg-[#18181b73] p-6 backdrop-blur-[28px]"
+              className="flex items-center gap-6 rounded-xl border border-[#ffffff14] bg-[#18181b73] p-6 backdrop-blur-[28px]"
             >
-              <p className="font-semibold text-[#fafafa]">{item.lead}</p>
-              <p className="text-sm leading-relaxed text-[#a1a1aa]">{item.body}</p>
+              <p className="w-64 shrink-0 font-semibold text-[#fafafa]">{item.lead}</p>
+              <p className="flex-1 text-sm leading-relaxed text-[#a1a1aa]">{item.body}</p>
             </div>
           ))}
         </div>
       </section>
 
       {/* What we've built on */}
-      <section className="mx-auto max-w-6xl px-8 py-16">
+      <section className="mx-auto max-w-[1600px] px-16 py-16">
         <h2 className="mb-10 text-2xl font-semibold tracking-tight text-[#fafafa]">What we&apos;ve built on</h2>
-        <div className="grid grid-cols-3 gap-6">
+        <div className="space-y-4">
           {BUILT_ON.map((item) => (
             <div
               key={item.title}
-              className="space-y-2 rounded-2xl border border-[#ffffff14] bg-[#18181b73] p-6 backdrop-blur-[28px]"
+              className="flex items-center gap-6 rounded-xl border border-[#ffffff14] bg-[#18181b73] p-6 backdrop-blur-[28px]"
             >
-              <p className="font-semibold text-[#fafafa]">{item.title}</p>
-              <p className="text-sm leading-relaxed text-[#a1a1aa]">{item.body}</p>
+              <p className="w-72 shrink-0 font-semibold text-[#fafafa]">{item.title}</p>
+              <p className="flex-1 text-sm leading-relaxed text-[#a1a1aa]">{item.body}</p>
             </div>
           ))}
 
           {/* Visually distinct — real integration path exists (SDK installed,
               matching signer infra built, correct contracts deployed) but not
               yet built/proven end-to-end. Deliberately not blended in with
-              the six confirmed-real items above. */}
-          <div className="space-y-2 rounded-2xl border border-dashed border-[#f59e0b66] bg-[#f59e0b0f] p-6">
-            <div className="flex items-center gap-2">
+              the six confirmed-real items above — same full-width bar shape,
+              different surface treatment. */}
+          <div className="flex items-center gap-6 rounded-xl border border-dashed border-[#f59e0b66] bg-[#f59e0b0f] p-6">
+            <div className="w-72 shrink-0 space-y-1">
               <p className="font-semibold italic text-[#f59e0b]">Nanopayments (powered by Circle Gateway)</p>
-              <span className="rounded-full border border-[#f59e0b66] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#f59e0b]">
+              <span className="inline-block rounded-full border border-[#f59e0b66] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#f59e0b]">
                 Coming soon
               </span>
             </div>
-            <p className="text-sm italic leading-relaxed text-[#a1a1aa]">
+            <p className="flex-1 text-sm italic leading-relaxed text-[#a1a1aa]">
               Not yet live. The real integration path exists — SDK already installed,
               matching signer infrastructure already built, correct contracts already
               deployed — but it hasn&apos;t been built and proven end-to-end yet.
@@ -192,7 +193,7 @@ export default function HomeMarketing() {
         </div>
       </section>
 
-      <footer className="mx-auto max-w-6xl px-8 py-12 text-center text-xs text-[#52525b]">
+      <footer className="mx-auto max-w-[1600px] px-16 py-12 text-center text-xs text-[#52525b]">
         Powered by Circle User-Controlled Wallets · Arc Testnet
       </footer>
       </div>
