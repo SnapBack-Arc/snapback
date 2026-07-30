@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import Nav from "@/components/Nav";
 import TaskSubmissionFlow from "@/components/TaskSubmissionFlow";
+import HomeMarketing from "@/components/home/HomeMarketing";
 import { getSession } from "@/lib/session";
 import { getUserWallet } from "@/lib/circle-wallets";
 
@@ -10,7 +11,7 @@ export default async function Home({
   searchParams: Promise<{ prefill?: string }>;
 }) {
   const session = await getSession();
-  if (!session) redirect("/login");
+  if (!session) return <HomeMarketing />;
 
   // Can't commission a task (or hold quote-phase escrow) without a wallet —
   // send them to generate one first, same as every other wallet-scoped page.
