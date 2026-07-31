@@ -32,7 +32,7 @@ export async function requireAdmin() {
   if (!session) redirect("/login");
 
   const wallet = await getUserWallet(session.uid);
-  if (!wallet || !isAdminAddress(wallet.address)) redirect("/dashboard");
+  if (!wallet || !isAdminAddress(wallet.address)) redirect("/wallet");
 
   return { session, wallet };
 }

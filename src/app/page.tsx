@@ -16,7 +16,7 @@ export default async function Home({
   // Can't commission a task (or hold quote-phase escrow) without a wallet —
   // send them to generate one first, same as every other wallet-scoped page.
   const wallet = await getUserWallet(session.uid);
-  if (!wallet) redirect("/dashboard");
+  if (!wallet) redirect("/wallet");
 
   // Populated when landing here via a rejected task's "Resubmit as a new
   // task" link (src/app/tasks/[id]/page.tsx) — the original spec plus the

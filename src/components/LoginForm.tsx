@@ -36,11 +36,11 @@ type DemoOption = {
 // not a second identity and grants nothing new.
 const DEMO_ACCOUNTS: DemoOption[] = [
   {
-    key: "test-dashboard",
+    key: "test-wallet",
     persona: "test",
     email: DEMO_TEST_ACCOUNT_EMAIL,
     label: `${DEMO_TEST_ACCOUNT_EMAIL} — existing activity`,
-    destination: "/dashboard",
+    destination: "/wallet",
   },
   {
     key: "test-admin",
@@ -147,7 +147,7 @@ export default function LoginForm() {
           setPhase("idle");
           return;
         }
-        router.push("/dashboard");
+        router.push("/wallet");
         router.refresh();
       };
 

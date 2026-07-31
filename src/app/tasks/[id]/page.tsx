@@ -548,7 +548,7 @@ export default async function TaskDetailPage({
   if (!session) redirect("/login");
 
   const wallet = await getUserWallet(session.uid);
-  if (!wallet) redirect("/dashboard");
+  if (!wallet) redirect("/wallet");
 
   const { id } = await params;
   const task = await getTaskById(id, wallet.id);
