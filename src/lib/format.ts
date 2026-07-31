@@ -24,6 +24,24 @@ export function formatUsdc(value: string | number | null | undefined): string {
   return `${n.toFixed(2)} USDC`;
 }
 
+/**
+ * Same as formatUsdc, except a genuinely non-zero amount that would round to
+ * "0.00" at 2 decimals (a tiny fee on a tiny job) shows just enough extra
+ * precision to prove it's real, trimmed of trailing zeros. Falls through to
+ * formatUsdc for everything else, so normal-sized amounts elsewhere are
+ * completely unaffected.
+ */
+export function formatUsdcPrecise(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return "—";
+  const n = typeof value === "string" ? Number(value) : value;
+  if (Number.isNaN(n)) return "—";
+  if (n !== 0 && Math.abs(n) < 0.005) {
+    const trimmed = n.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+    return `${trimmed} USDC`;
+  }
+  return formatUsdc(n);
+}
+
 /** Tailwind classes for a status pill by loose category. */
 export function statusClasses(status: string): string {
   const s = status.toLowerCase();

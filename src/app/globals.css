@@ -32,3 +32,21 @@ body {
   border-radius: var(--glass-radius);
   backdrop-filter: blur(var(--glass-blur));
 }
+
+/* Honest "working" indicator for real, variable-duration async calls (e.g.
+   an LLM agent run) — a sliding bar, not a fake percentage or countdown. */
+@keyframes progress-indeterminate {
+  0% {
+    transform: translateX(-100%) scaleX(0.4);
+  }
+  50% {
+    transform: translateX(40%) scaleX(0.6);
+  }
+  100% {
+    transform: translateX(160%) scaleX(0.4);
+  }
+}
+
+@utility progress-indeterminate-bar {
+  animation: progress-indeterminate 1.4s ease-in-out infinite;
+}
