@@ -1,35 +1,24 @@
 import { redirect } from "next/navigation";
 import Nav from "@/components/Nav";
-import TaskSubmissionFlow from "@/components/TaskSubmissionFlow";
+import VerifyFlow from "@/components/VerifyFlow";
 import HomeMarketing from "@/components/home/HomeMarketing";
 import { getSession } from "@/lib/session";
 import { getUserWallet } from "@/lib/circle-wallets";
 
-export default async function Home({
-  searchParams,
-}: {
-  searchParams: Promise<{ prefill?: string }>;
-}) {
+export default async function Home() {
   const session = await getSession();
   if (!session) return <HomeMarketing />;
 
-  // Can't commission a task (or hold quote-phase escrow) without a wallet —
-  // send them to generate one first, same as every other wallet-scoped page.
+  // The Verify step charges a small real fee from this wallet (see
+  // /api/demo/verify) — send them to generate one first, same as every
+  // other wallet-scoped page.
   const wallet = await getUserWallet(session.uid);
   if (!wallet) redirect("/wallet");
-
-  // Populated when landing here via a rejected task's "Resubmit as a new
-  // task" link (src/app/tasks/[id]/page.tsx) — the original spec plus the
-  // validator-rejection feedback's carry-forward context, pre-filled but
-  // fully editable. This is a brand-new, separately-quoted-and-funded task
-  // through the normal flow below; nothing here submits or charges anything
-  // automatically.
-  const { prefill } = await searchParams;
 
   return (
     <main className="min-h-screen">
       <Nav email={session.email} />
-      <TaskSubmissionFlow initialSpecText={prefill} />
+      <VerifyFlow />
     </main>
   );
 }

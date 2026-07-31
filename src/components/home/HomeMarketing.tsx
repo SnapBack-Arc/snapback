@@ -66,7 +66,7 @@ const BUILT_ON = [
 ];
 
 // Rendered only for anonymous visitors (see src/app/page.tsx) — a logged-in
-// session with a wallet always gets TaskSubmissionFlow instead, unchanged.
+// session with a wallet always gets VerifyFlow instead, unchanged.
 export default function HomeMarketing() {
   return (
     <div className="min-h-screen text-[#fafafa]">

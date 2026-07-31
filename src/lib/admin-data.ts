@@ -110,6 +110,12 @@ export type TreasuryOverview = {
  *     (parallel_payer) on a different chain (Base mainnet, not Arc) — out of
  *     scope for this Treasury-wallet function entirely; see
  *     getParallelSpendOverview() below.
+ *   - verification_fee (status=released) -> real revenue: the home page's
+ *     "Verify" step (components/VerifyFlow.tsx, /api/demo/verify) — a flat
+ *     fee charged on every real judge call, kept regardless of the judged
+ *     CORRECT/INCORRECT outcome. Deliberately its own line, not folded into
+ *     platform_fee — a genuinely different revenue stream (no escrow/task/
+ *     seller behind it at all), not the escrow flow's happy-path skim.
  */
 export async function getTreasuryOverview(): Promise<TreasuryOverview> {
   const supabase = createServiceSupabase();
@@ -160,6 +166,7 @@ export async function getTreasuryOverview(): Promise<TreasuryOverview> {
   const filingFeesForfeited = sum((p) => p.kind === "filing_fee" && p.status === "released");
   const contingenciesForfeited = sum((p) => p.kind === "dispute_contingency" && p.status === "released");
   const arbitrationFees = sum((p) => p.kind === "judge_fee");
+  const verificationFees = sum((p) => p.kind === "verification_fee" && p.status === "released");
   const topicChangeSweeps = sum(
     (p) =>
       p.kind === "treasury_sweep" &&
@@ -242,6 +249,12 @@ export async function getTreasuryOverview(): Promise<TreasuryOverview> {
           : undefined,
     },
     {
+      label: "Verification fees (Demo page)",
+      total_usdc: verificationFees.total,
+      count: verificationFees.count,
+      note: "Flat fee charged on every real Verify call (components/VerifyFlow.tsx) — kept regardless of the judged CORRECT/INCORRECT outcome.",
+    },
+    {
       label: "Topic-change sweeps",
       total_usdc: topicChangeSweeps.total,
       count: topicChangeSweeps.count,
@@ -292,6 +305,7 @@ export async function getTreasuryOverview(): Promise<TreasuryOverview> {
     filingFeesForfeited.total +
     contingenciesForfeited.total +
     arbitrationFees.total +
+    verificationFees.total +
     topicChangeSweeps.total +
     abandonmentSweeps.total;
 

@@ -54,6 +54,7 @@ const PAYMENT_KIND_LABELS: Record<string, string> = {
   validation_fee: "Validator cost-recovery fee",
   dispute_contingency: "Dispute contingency (held)",
   marketplace_payment: "Real marketplace payment (Parallel)",
+  verification_fee: "Verification fee (Demo page)",
 };
 
 export function paymentKindLabel(kind: string): string {

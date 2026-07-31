@@ -228,6 +228,22 @@ export type ResearchSourcingResult = {
   usage: { research: TokenUsage; structure: TokenUsage };
 };
 
+/**
+ * Free variant for the home page's "Get Answer" step — the exact same real
+ * research + structuring Claude calls as runResearchSourcingAgent below, but
+ * deliberately never attempts the paid Parallel/x402 call. Stands in for
+ * "some free marketplace agent answered you," as distinct from the paid
+ * worker /api/tasks/[id]/deliver uses for a funded task.
+ */
+export async function runFreeResearch(taskDescription: string): Promise<{
+  deliverable: ResearchDeliverable;
+  usage: { research: TokenUsage; structure: TokenUsage };
+}> {
+  const { reportText, sources, usage: researchUsage } = await research(taskDescription, null);
+  const { deliverable, usage: structureUsage } = await structure(taskDescription, reportText, sources);
+  return { deliverable, usage: { research: researchUsage, structure: structureUsage } };
+}
+
 export async function runResearchSourcingAgent(
   taskDescription: string,
 ): Promise<ResearchSourcingResult> {
