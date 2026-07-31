@@ -24,7 +24,7 @@ function randomOrb(): Orb {
     hue: r(0, 360),
     sat: r(55, 85),
     light: r(45, 65),
-    alpha: r(0.16, 0.34),
+    alpha: r(0.09, 0.19),
     blur: r(45, 90),
     duration: r(9, 22),
   };

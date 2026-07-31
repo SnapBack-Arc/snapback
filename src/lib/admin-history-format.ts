@@ -55,6 +55,7 @@ const PAYMENT_KIND_LABELS: Record<string, string> = {
   dispute_contingency: "Dispute contingency (held)",
   marketplace_payment: "Real marketplace payment (Parallel)",
   verification_fee: "Verification fee (Demo page)",
+  dispute_insurance_premium: "Dispute-insurance premium",
 };
 
 export function paymentKindLabel(kind: string): string {
@@ -64,6 +65,65 @@ export function paymentKindLabel(kind: string): string {
 /** True if this payment row has real on-chain evidence, not just a ledger entry. */
 export function isOnChainConfirmed(payment: PaymentRow): boolean {
   return !!payment.tx_hash;
+}
+
+/**
+ * True if this deposit-kind payment is the real, non-failed Gateway deposit
+ * call, not the ERC-20 approve leg recorded alongside it — the deposit route
+ * (api/wallet/gateway/deposit) inserts one payments row per step (approve,
+ * then deposit), both kind="deposit" and both carrying the full deposit
+ * amount. Summing every kind="deposit" row would double-count every
+ * completed deposit. Deposit rows never move past "pending" on success (no
+ * webhook flips them to any kind of "confirmed" state — see the docblock on
+ * that route) but DO get flipped to "failed" by the real Circle webhook
+ * (lib/webhooks/handle-notification.ts:handleTransactionEvent) if the
+ * on-chain transaction genuinely failed — excluding those is what keeps a
+ * real failed deposit attempt from being counted as money that arrived.
+ */
+export function isCompletedDepositLeg(payment: PaymentRow): boolean {
+  return (
+    payment.kind === "deposit" &&
+    (payment.metadata as { step?: string } | null)?.step === "deposit" &&
+    payment.status !== "failed"
+  );
+}
+
+/**
+ * True if this payment represents real money paid back to `walletId` — a
+ * task escrow reclaimed (dispute win via the on-chain resolve webhook, or an
+ * expired-escrow SnapBack claim — lib/tasks/claim-expired.ts), a forfeited
+ * fee reversed on a dispute win (filing fee / dispute contingency refunded —
+ * lib/disputes/service.ts), a standard-dispute settlement recorded as its
+ * own row (kind="refund", to_wallet_id=buyer — the shape seeded demo history
+ * uses for the same real-world event, rather than flipping an existing
+ * escrow row's status), or a real insurance-pool payout. Mirrors the
+ * revenue-classification care in lib/admin-data.ts, for the opposite side of
+ * the same ledger: what actually came back to this wallet, not what
+ * Treasury kept. Like that classification's filing_fee/dispute_contingency
+ * lines, deliberately not gated on metadata.demo — only insurance_payout's
+ * real-transfer check is.
+ */
+export function isPaidBackToWallet(payment: PaymentRow, walletId: string): boolean {
+  if (
+    payment.from_wallet_id === walletId &&
+    payment.status === "refunded" &&
+    (payment.kind === "escrow" || payment.kind === "filing_fee" || payment.kind === "dispute_contingency")
+  ) {
+    return true;
+  }
+  if (payment.to_wallet_id === walletId && payment.kind === "refund" && payment.status === "refunded") {
+    return true;
+  }
+  if (
+    payment.to_wallet_id === walletId &&
+    payment.kind === "insurance_payout" &&
+    payment.status === "released" &&
+    payment.tx_hash !== null &&
+    (payment.metadata as { demo?: boolean } | null)?.demo !== true
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /**

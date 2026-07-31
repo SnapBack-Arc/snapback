@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { WalletRow } from "@/lib/supabase/types";
+import type { WalletRow, PaymentRow } from "@/lib/supabase/types";
+import { shortAddress, statusClasses } from "@/lib/format";
+import { paymentKindLabel } from "@/lib/admin-history-format";
+import { ARC_EXPLORER_URL, explorerTxUrl } from "@/lib/arc";
 
 const FAUCET_URL =
   process.env.NEXT_PUBLIC_ARC_FAUCET_URL ?? "https://faucet.circle.com";
-const EXPLORER_URL =
-  process.env.NEXT_PUBLIC_ARC_EXPLORER_URL ?? "https://testnet.arcscan.app";
 
 type Balances = {
   usdc: string;
@@ -14,10 +15,23 @@ type Balances = {
   gateway: string | null;
 };
 
+function formatDollars(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return "$—";
+  const n = typeof value === "string" ? Number(value) : value;
+  if (Number.isNaN(n)) return "$—";
+  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 export default function WalletDashboard({
   initialWallet,
+  payments,
+  lifetimeDepositsUsdc,
+  lifetimePaidBackUsdc,
 }: {
   initialWallet: WalletRow | null;
+  payments: PaymentRow[];
+  lifetimeDepositsUsdc: number;
+  lifetimePaidBackUsdc: number;
 }) {
   const [wallet, setWallet] = useState<WalletRow | null>(initialWallet);
   const [balances, setBalances] = useState<Balances | null>(null);
@@ -99,12 +113,12 @@ export default function WalletDashboard({
   }
 
   return (
-    <div className="mx-auto w-full max-w-2xl space-y-6 p-6">
-      <h1 className="text-2xl font-bold text-white">Wallet</h1>
+    <div className="mx-auto w-full max-w-[1600px] space-y-6 px-16 py-12">
+      <h1 className="text-2xl font-bold text-[#fafafa]">Wallet</h1>
 
       {!wallet ? (
-        <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-6 text-center">
-          <p className="mb-4 text-zinc-300">
+        <section className="rounded-xl border border-[#ffffff14] bg-[#18181b73] p-6 text-center backdrop-blur-[28px]">
+          <p className="mb-4 text-[#a1a1aa]">
             You don&apos;t have an Arc Testnet wallet yet.
           </p>
           <button
@@ -117,72 +131,158 @@ export default function WalletDashboard({
         </section>
       ) : (
         <>
-          <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
-            <div className="mb-1 text-xs uppercase tracking-wide text-zinc-500">
-              Address (Arc Testnet · SCA)
-            </div>
-            <a
-              href={`${EXPLORER_URL}/address/${wallet.address}`}
-              target="_blank"
-              rel="noreferrer"
-              className="break-all font-mono text-sm text-emerald-400 hover:underline"
-            >
-              {wallet.address}
-            </a>
-          </section>
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            {/* Left: address, balance, faucet */}
+            <section className="rounded-xl border border-[#ffffff14] bg-[#18181b73] p-6 backdrop-blur-[28px]">
+              <div className="mb-1 text-xs uppercase tracking-wide text-[#71717a]">
+                Arc Testnet address
+              </div>
+              <a
+                href={`${ARC_EXPLORER_URL}/address/${wallet.address}`}
+                target="_blank"
+                rel="noreferrer"
+                className="font-mono text-sm text-[#a1a1aa] hover:text-[#fafafa] hover:underline"
+              >
+                {shortAddress(wallet.address)}
+              </a>
 
-          <section className="grid grid-cols-3 gap-3">
-            <Balance label="USDC" value={balances?.usdc} suffix="USDC" />
-            <Balance label="Gas (native)" value={balances?.gas} suffix="USDC" />
-            <Balance
-              label="Gateway"
-              value={balances?.gateway ?? undefined}
-              suffix="USDC"
-            />
-          </section>
+              <div className="mb-1 mt-6 text-xs uppercase tracking-wide text-[#71717a]">
+                USDC balance
+              </div>
+              <div className="font-mono text-4xl font-bold text-[#fafafa]">
+                {balances ? formatDollars(balances.usdc) : "$—"}
+              </div>
 
-          <div className="flex gap-3">
-            <a
-              href={FAUCET_URL}
-              target="_blank"
-              rel="noreferrer"
-              className="flex-1 rounded-lg border border-zinc-700 px-4 py-2 text-center text-sm text-zinc-200 hover:bg-zinc-800"
-            >
-              Fund via faucet ↗
-            </a>
-            <button
-              onClick={loadBalances}
-              className="rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-200 hover:bg-zinc-800"
-            >
-              Refresh
-            </button>
+              <div className="mt-6 flex gap-3">
+                <a
+                  href={FAUCET_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-zinc-950 hover:bg-emerald-400"
+                >
+                  Faucet
+                </a>
+                <button
+                  onClick={loadBalances}
+                  className="rounded-lg border border-[#3f3f46] px-4 py-2 text-sm text-[#a1a1aa] hover:bg-[#ffffff0a]"
+                >
+                  Refresh
+                </button>
+              </div>
+            </section>
+
+            {/* Right: Gateway deposit / withdraw / swap */}
+            <section className="rounded-xl border border-[#ffffff14] bg-[#18181b73] p-6 backdrop-blur-[28px]">
+              <div className="mb-3 text-xs uppercase tracking-wide text-[#71717a]">
+                Gateway deposit
+              </div>
+              <form onSubmit={deposit} className="space-y-3">
+                <input
+                  type="number"
+                  min="0"
+                  step="0.000001"
+                  value={depositAmount}
+                  onChange={(e) => setDepositAmount(e.target.value)}
+                  placeholder="Amount USDC"
+                  required
+                  disabled={depositing}
+                  className="w-full rounded-lg border border-[#3f3f46] bg-[#09090b] px-3 py-2 text-[#fafafa] outline-none focus:border-emerald-500"
+                />
+                <div className="grid grid-cols-3 gap-3">
+                  <button
+                    type="submit"
+                    disabled={depositing}
+                    className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-zinc-950 hover:bg-emerald-400 disabled:opacity-60"
+                  >
+                    {depositing ? "Depositing…" : "Deposit"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled
+                    title="Not live yet — no Gateway withdrawal path exists in this app"
+                    className="cursor-not-allowed rounded-lg border border-dashed border-[#f59e0b66] bg-[#f59e0b0f] px-4 py-2 text-sm font-semibold italic text-[#f59e0b] opacity-70"
+                  >
+                    Withdraw
+                  </button>
+                  <button
+                    type="button"
+                    disabled
+                    title="Not live yet — no token-swap path exists in this app"
+                    className="cursor-not-allowed rounded-lg border border-dashed border-[#f59e0b66] bg-[#f59e0b0f] px-4 py-2 text-sm font-semibold italic text-[#f59e0b] opacity-70"
+                  >
+                    Swap
+                  </button>
+                </div>
+              </form>
+              {status && <p className="mt-3 text-sm text-emerald-400">{status}</p>}
+              <p className="mt-3 text-xs text-[#71717a]">
+                Withdraw and Swap aren&apos;t wired to anything real yet — Deposit is the only live Gateway action.
+              </p>
+            </section>
           </div>
 
-          <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
-            <h2 className="mb-3 text-sm font-semibold text-zinc-200">
-              Deposit to Gateway
-            </h2>
-            <form onSubmit={deposit} className="flex gap-3">
-              <input
-                type="number"
-                min="0"
-                step="0.000001"
-                value={depositAmount}
-                onChange={(e) => setDepositAmount(e.target.value)}
-                placeholder="Amount in USDC"
-                required
-                disabled={depositing}
-                className="flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100 outline-none focus:border-emerald-500"
-              />
-              <button
-                type="submit"
-                disabled={depositing}
-                className="rounded-lg bg-emerald-500 px-4 py-2 font-semibold text-zinc-950 hover:bg-emerald-400 disabled:opacity-60"
-              >
-                {depositing ? "Depositing…" : "Approve + Deposit"}
-              </button>
-            </form>
-            {status && <p className="mt-3 text-sm text-emerald-400">{status}</p>}
+          {/* Lifetime stats */}
+          <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
+            <StatCard label="Lifetime deposits" value={formatDollars(lifetimeDepositsUsdc)} />
+            <StatCard label="Lifetime paid back" value={formatDollars(lifetimePaidBackUsdc)} valueClass="text-emerald-400" />
+            <StatCard
+              label="Wallet since"
+              value={
+                wallet.created_at
+                  ? new Date(wallet.created_at).toLocaleDateString(undefined, { month: "short", year: "numeric" })
+                  : "—"
+              }
+            />
+          </div>
+
+          {/* Transaction history */}
+          <section className="rounded-xl border border-[#ffffff14] bg-[#18181b73] backdrop-blur-[28px]">
+            <div className="border-b border-[#ffffff14] px-6 py-4 text-xs uppercase tracking-wide text-[#71717a]">
+              Transaction history
+            </div>
+            {payments.length === 0 ? (
+              <p className="px-6 py-6 text-sm text-[#71717a]">No transactions yet.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="text-xs uppercase tracking-wide text-[#71717a]">
+                      <th className="px-6 py-3 font-medium">Kind</th>
+                      <th className="px-6 py-3 font-medium">Status</th>
+                      <th className="px-6 py-3 font-medium">Amount</th>
+                      <th className="px-6 py-3 font-medium">Tx</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {payments.map((p) => (
+                      <tr key={p.id} className="border-t border-[#ffffff0a]">
+                        <td className="px-6 py-3 text-[#fafafa]">{paymentKindLabel(p.kind)}</td>
+                        <td className="px-6 py-3">
+                          <span className={`rounded-full px-2 py-0.5 text-xs ${statusClasses(p.status)}`}>
+                            {p.status}
+                          </span>
+                        </td>
+                        <td className="px-6 py-3 font-mono text-[#fafafa]">{formatDollars(p.amount_usdc)}</td>
+                        <td className="px-6 py-3 font-mono text-xs">
+                          {p.tx_hash ? (
+                            <a
+                              href={explorerTxUrl(p.tx_hash)}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-emerald-400 hover:underline"
+                            >
+                              {shortAddress(p.tx_hash)}
+                            </a>
+                          ) : (
+                            <span className="text-[#52525b]">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
         </>
       )}
@@ -192,24 +292,19 @@ export default function WalletDashboard({
   );
 }
 
-function Balance({
+function StatCard({
   label,
   value,
-  suffix,
+  valueClass,
 }: {
   label: string;
-  value: string | undefined;
-  suffix: string;
+  value: string;
+  valueClass?: string;
 }) {
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
-      <div className="text-xs uppercase tracking-wide text-zinc-500">
-        {label}
-      </div>
-      <div className="mt-1 font-mono text-lg text-white">
-        {value ?? "—"}
-        <span className="ml-1 text-xs text-zinc-500">{suffix}</span>
-      </div>
+    <div className="rounded-xl border border-[#ffffff14] bg-[#18181b73] p-5 backdrop-blur-[28px]">
+      <div className="text-xs uppercase tracking-wide text-[#71717a]">{label}</div>
+      <div className={`mt-1 font-mono text-xl text-[#fafafa] ${valueClass ?? ""}`}>{value}</div>
     </div>
   );
 }
