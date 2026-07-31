@@ -52,26 +52,6 @@ const GATE_LABEL: Record<GateResult, string> = {
   topic_change: "Topic changed",
 };
 
-function sellerRankLabel(sla: unknown): string | null {
-  if (!sla || typeof sla !== "object") return null;
-  const entries = Object.entries(sla as Record<string, unknown>).filter(
-    ([k, v]) =>
-      k !== "agent" && (typeof v === "string" || typeof v === "number" || typeof v === "boolean"),
-  );
-  if (entries.length === 0) return null;
-  return entries.map(([k, v]) => `${k}: ${v}`).join(" · ");
-}
-
-/** Reserved, non-interactive slot shown alongside/instead of real candidates. */
-function PlaceholderSlot() {
-  return (
-    <div className="w-full rounded-xl border border-dashed border-zinc-800 bg-zinc-950/50 px-4 py-3">
-      <div className="h-4 w-1/3 rounded bg-zinc-800/60" />
-      <div className="mt-2 h-3 w-2/3 rounded bg-zinc-800/40" />
-    </div>
-  );
-}
-
 export default function TaskSubmissionFlow({
   initialSpecText,
 }: {
@@ -176,9 +156,21 @@ export default function TaskSubmissionFlow({
     }
   }
 
+  function reset() {
+    setSpecText("");
+    setQuote(null);
+    setQuoteError(null);
+    setCategoryMismatch(null);
+    setListings(null);
+    setListingsError(null);
+    setSelectedListingId(null);
+    setTitle("");
+    setSubmitError(null);
+  }
+
   // The only listing this flow ever shows as a candidate is Research &
-  // Sourcing — see the "Choose a seller" section below for why every other
-  // listing is excluded rather than shown as a simulated competing quote.
+  // Sourcing — see the real-match block below for why every other listing
+  // is excluded rather than shown as a simulated competing quote.
   const autoSelectedId = quote?.session.matched_listing_ids.find((id) =>
     listings?.some((l) => l.id === id),
   );
@@ -214,209 +206,181 @@ export default function TaskSubmissionFlow({
     });
   }
 
+  const busy = quoting || submitting;
+
   return (
-    <div className="mx-auto w-full max-w-2xl space-y-6 p-6">
-      <div>
-        <h1 className="text-2xl font-bold text-white">Commission a task</h1>
-        <p className="mt-1 text-sm text-zinc-400">
-          Describe what you need in plain language. We&apos;ll quote it against active Marketplace sellers before you pay anything.
-        </p>
-        <p className="mt-2 text-xs text-zinc-500">
-          This request goes to SnapBack&apos;s live integration:{" "}
-          <span className="text-zinc-300">{category.label}</span>.
+    <div className="mx-auto w-full max-w-2xl space-y-8 px-6 py-12">
+      <div className="space-y-2 text-center">
+        <h1 className="text-3xl font-semibold tracking-tight text-[#fafafa]">Try SnapBack</h1>
+        <p className="text-sm text-[#a1a1aa]">
+          Describe what you need in plain language — get a real quote, fund it, and the real
+          agent takes it from there.
         </p>
       </div>
 
-      <form onSubmit={getQuote} className="space-y-3">
-        <h2 className="text-sm font-semibold text-zinc-200">Describe the task</h2>
-        {initialSpecText && (
-          <p className="rounded-lg border border-cyan-500/30 bg-cyan-500/5 px-3 py-2 text-xs text-cyan-300">
-            Pre-filled from a rejected task&apos;s feedback — edit as needed. This is a new,
-            separately-priced task; nothing is resubmitted automatically.
-          </p>
-        )}
-        <textarea
-          value={specText}
-          onChange={(e) => setSpecText(e.target.value)}
-          rows={4}
-          placeholder="e.g. Find 5 suppliers of LED panels in Southeast Asia, deliver as a comparison table."
-          disabled={quoting}
-          className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-60"
-        />
-        <button
-          type="submit"
-          disabled={quoting || !specText.trim()}
-          className="rounded-lg bg-emerald-500 px-4 py-2 font-semibold text-zinc-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {quoting ? "Quoting…" : quote ? "Re-quote" : "Get quote"}
-        </button>
-        {quoteError && <p className="text-sm text-red-400">{quoteError}</p>}
-        {categoryMismatch && (
-          <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-300">
-            This looks like a different kind of request than {category.label}: {categoryMismatch.reason}{" "}
-            Rewrite your request so it&apos;s actually about {category.label.toLowerCase()}.
-          </p>
-        )}
-      </form>
-
-      {quote && (
-        <section className="space-y-4 rounded-xl border border-zinc-800 bg-zinc-900 p-5">
-          <div className="flex items-center justify-between">
-            <span className="rounded-full bg-zinc-700/40 px-2.5 py-1 text-xs font-medium text-zinc-300">
-              {GATE_LABEL[quote.gate_result]}
-            </span>
-            <span className="text-xs text-zinc-500">
-              Attempt {quote.attempt_no} · session {quote.session.subject}
-            </span>
+      <div className="space-y-6 rounded-2xl border border-[#ffffff1c] bg-[#111113cc] p-8 backdrop-blur-[24px]">
+        <form onSubmit={getQuote} className="space-y-6">
+          <div className="space-y-2">
+            <label
+              htmlFor="instruction"
+              className="text-xs font-medium uppercase tracking-widest text-[#71717a]"
+            >
+              Instruction
+            </label>
+            <textarea
+              id="instruction"
+              value={specText}
+              onChange={(e) => setSpecText(e.target.value)}
+              rows={4}
+              placeholder="e.g. Summarize the top 3 competitors in EU fintech"
+              disabled={busy}
+              className="w-full rounded-xl border border-[#3f3f46] bg-[#18181b] px-3 py-2.5 text-[#fafafa] outline-none transition focus:border-[#10b981] disabled:opacity-60"
+            />
+            {initialSpecText && (
+              <p className="rounded-lg border border-[#22d3ee4d] bg-[#22d3ee0d] px-3 py-2 text-xs text-[#67e8f9]">
+                Pre-filled from a rejected task&apos;s feedback — edit as needed. This is a new,
+                separately-priced task; nothing is resubmitted automatically.
+              </p>
+            )}
           </div>
 
-          {quote.gate_result === "topic_change" && quote.swept && (
-            <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-300">
-              This reads as a new topic, not a retry — the previous quote&apos;s held escrow
-              ({formatUsdc(quote.swept.amount_usdc)}) was swept to Treasury, and a fresh
-              session started for this request.
-            </p>
-          )}
-          {quote.gate_result === "retry_charged" && (
-            <p className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-300">
-              This is your 3rd+ attempt on this topic — {formatUsdc(quote.charged_usdc)} was
-              charged into escrow for this retry (first 2 attempts are free).
-            </p>
-          )}
-          {quote.gate_result === "retry_free" && (
-            <p className="text-sm text-zinc-400">
-              Free retry — attempts 1–2 on the same topic don&apos;t charge anything.
-            </p>
-          )}
+          <div className="space-y-2">
+            <label className="text-xs font-medium uppercase tracking-widest text-[#71717a]">
+              Agent&apos;s result
+            </label>
+            {/* No real equivalent yet — the real agent runs automatically once a
+                task is funded and delivers on its own; nothing is manually
+                pasted. This slot is reserved to later show that real result;
+                left visibly inert rather than faked as a working paste box. */}
+            <div className="w-full cursor-not-allowed select-none rounded-xl border border-dashed border-[#3f3f46] bg-[#18181b]/40 px-3 py-8 text-center text-sm italic text-[#71717a]">
+              Not available yet — this will show the agent&apos;s real delivered result once a
+              task is funded and completed.
+            </div>
+          </div>
 
-          <div className="space-y-1 border-t border-zinc-800 pt-3">
-            <div className="flex items-baseline justify-between">
-              <span className="text-sm text-zinc-400">Guaranteed total</span>
-              <span className="text-xl font-bold text-white">
-                {formatUsdc(quote.quote.guaranteed_total_usdc)}
+          <div className="flex items-center gap-3">
+            <button
+              type="submit"
+              disabled={busy || !specText.trim()}
+              className="rounded-xl bg-[#10b981] px-5 py-2.5 font-semibold text-[#052e1f] transition hover:bg-[#34d399] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {quoting ? "Quoting…" : quote ? "Re-quote" : "Get Quote"}
+            </button>
+            <button
+              type="button"
+              onClick={reset}
+              disabled={busy}
+              className="rounded-xl border border-[#3f3f46] px-5 py-2.5 font-semibold text-[#a1a1aa] transition hover:bg-[#ffffff0a] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Reset
+            </button>
+          </div>
+
+          {quoteError && (
+            <p className="rounded-lg border border-[#7f1d1d77] bg-[#450a0a66] px-3 py-2 text-sm text-[#f87171]">
+              {quoteError}
+            </p>
+          )}
+          {categoryMismatch && (
+            <p className="rounded-lg border border-[#f59e0b4d] bg-[#f59e0b1a] px-3 py-2 text-sm text-[#fbbf24]">
+              This looks like a different kind of request than {category.label}:{" "}
+              {categoryMismatch.reason} Rewrite your request so it&apos;s actually about{" "}
+              {category.label.toLowerCase()}.
+            </p>
+          )}
+        </form>
+
+        {quote && (
+          <div className="space-y-4 border-t border-[#ffffff14] pt-6">
+            <div className="flex items-center justify-between">
+              <span className="rounded-full bg-[#ffffff14] px-2.5 py-1 text-xs font-medium text-[#a1a1aa]">
+                {GATE_LABEL[quote.gate_result]}
+              </span>
+              <span className="text-xs text-[#71717a]">
+                Attempt {quote.attempt_no} · session {quote.session.subject}
               </span>
             </div>
-            <p className="text-xs text-zinc-500">
-              Seller cost estimate {formatUsdc(quote.quote.seller_cost_estimate_usdc)} + platform
-              fee {formatUsdc(quote.quote.happy_path_fee_usdc)} + validation fee{" "}
-              {formatUsdc(quote.quote.validation_fee_usdc)} + dispute-insurance premium{" "}
-              {formatUsdc(quote.quote.dispute_insurance_premium_usdc)}
-            </p>
-            <p className="text-xs text-zinc-500">
-              The dispute-insurance premium funds a full refund if you win a dispute — like the
-              fees above, it&apos;s never refunded itself.
-            </p>
-            {quote.quote.contingent_disclosure && (
-              <p className="text-xs text-zinc-500">{quote.quote.contingent_disclosure}</p>
-            )}
-            {!quote.quote.within_budget_ceiling && (
-              <p className="text-xs text-red-400">
-                This exceeds your standing policy&apos;s max amount (
-                {formatUsdc(quote.quote.policy_max_amount_usdc)}).
+
+            {quote.gate_result === "topic_change" && quote.swept && (
+              <p className="rounded-lg border border-[#f59e0b4d] bg-[#f59e0b1a] px-3 py-2 text-sm text-[#fbbf24]">
+                This reads as a new topic, not a retry — the previous quote&apos;s held escrow
+                ({formatUsdc(quote.swept.amount_usdc)}) was swept to Treasury, and a fresh
+                session started for this request.
               </p>
             )}
-          </div>
-        </section>
-      )}
+            {quote.gate_result === "retry_charged" && (
+              <p className="rounded-lg border border-[#3f3f46] bg-[#18181b] px-3 py-2 text-sm text-[#a1a1aa]">
+                This is your 3rd+ attempt on this topic — {formatUsdc(quote.charged_usdc)}{" "}
+                was charged into escrow for this retry (first 2 attempts are free).
+              </p>
+            )}
+            {quote.gate_result === "retry_free" && (
+              <p className="text-sm text-[#a1a1aa]">
+                Free retry — attempts 1–2 on the same topic don&apos;t charge anything.
+              </p>
+            )}
 
-      <AgentRoster agents={agents} />
+            <div className="space-y-1">
+              <div className="flex items-baseline justify-between">
+                <span className="text-sm text-[#a1a1aa]">Guaranteed total</span>
+                <span className="text-xl font-semibold text-[#fafafa]">
+                  {formatUsdc(quote.quote.guaranteed_total_usdc)}
+                </span>
+              </div>
+              <p className="text-xs text-[#71717a]">
+                Seller cost estimate {formatUsdc(quote.quote.seller_cost_estimate_usdc)} +
+                platform fee {formatUsdc(quote.quote.happy_path_fee_usdc)} + validation fee{" "}
+                {formatUsdc(quote.quote.validation_fee_usdc)} + dispute-insurance premium{" "}
+                {formatUsdc(quote.quote.dispute_insurance_premium_usdc)}
+              </p>
+              <p className="text-xs text-[#71717a]">
+                The dispute-insurance premium funds a full refund if you win a dispute — like the
+                fees above, it&apos;s never refunded itself.
+              </p>
+              {quote.quote.contingent_disclosure && (
+                <p className="text-xs text-[#71717a]">{quote.quote.contingent_disclosure}</p>
+              )}
+              {!quote.quote.within_budget_ceiling && (
+                <p className="text-xs text-[#f87171]">
+                  This exceeds your standing policy&apos;s max amount (
+                  {formatUsdc(quote.quote.policy_max_amount_usdc)}).
+                </p>
+              )}
+              {isRealMatch && matchedListing && realPriceUsdc !== null && (
+                <p className="text-xs text-[#71717a]">
+                  Delivered by {matchedListing.title} — priced at {formatUsdc(realPriceUsdc)}{" "}
+                  for this task&apos;s scope.
+                </p>
+              )}
+            </div>
 
-      {quote && (
-        <section className="space-y-3">
-          <h2 className="text-sm font-semibold text-zinc-200">Choose a seller</h2>
-          {listingsError && <p className="text-sm text-red-400">{listingsError}</p>}
-          {listings && listings.length === 0 && (
-            <p className="text-sm text-zinc-500">No active listings available right now.</p>
-          )}
-          {/* SnapBack runs exactly one real worker agent (Research & Sourcing)
-              — nothing here should ever read as a real competing quote unless
-              it genuinely is one. See README.md "Research & Sourcing — the
-              one real integration". */}
-          {listings && isRealMatch && matchedListing && realPriceUsdc !== null && (
-            <div className="space-y-2">
+            {listingsError && <p className="text-sm text-[#f87171]">{listingsError}</p>}
+
+            {quote && selectedListing && realPriceUsdc !== null ? (
               <button
                 type="button"
-                onClick={() => setSelectedListingId(matchedListing.id)}
-                className={`w-full rounded-xl border px-4 py-3 text-left transition ${
-                  selectedListingId === matchedListing.id
-                    ? "border-emerald-500 bg-emerald-500/10"
-                    : "border-zinc-800 bg-zinc-900 hover:border-zinc-700"
-                }`}
+                onClick={submitForReal}
+                disabled={submitting || !title.trim()}
+                className="w-full rounded-xl bg-[#10b981] px-5 py-2.5 font-semibold text-[#052e1f] transition hover:bg-[#34d399] disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold text-white">{matchedListing.title}</span>
-                      <span className="rounded-full bg-cyan-500/15 px-2 py-0.5 text-xs text-cyan-400">
-                        Real agent
-                      </span>
-                    </div>
-                    {matchedListing.description && (
-                      <p className="mt-0.5 text-sm text-zinc-400">{matchedListing.description}</p>
-                    )}
-                    <p className="mt-1 text-xs text-zinc-500">
-                      Live quote, priced for this task&apos;s scope — not a fixed listing price.
-                    </p>
-                    <p className="mt-1 text-xs text-zinc-600">
-                      Reputation: New seller
-                      {sellerRankLabel(matchedListing.sla) ? ` · SLA — ${sellerRankLabel(matchedListing.sla)}` : ""}
-                    </p>
-                  </div>
-                  <span className="shrink-0 font-mono text-sm text-zinc-200">
-                    {formatUsdc(realPriceUsdc)}
-                  </span>
-                </div>
+                {submitting ? "Funding…" : `Accept Quote — fund ${formatUsdc(realPriceUsdc)}`}
               </button>
-              <p className="px-1 text-xs text-zinc-500">
-                1 real quote shown above; the system is designed to surface 3-5 live candidates
-                once more worker agents are connected.
+            ) : (
+              <p className="rounded-lg border border-[#3f3f46] bg-[#18181b] px-3 py-2 text-xs text-[#71717a]">
+                This demo currently runs one real worker agent ({category.label}); once matched
+                you&apos;ll be able to accept and fund here.
               </p>
-              <PlaceholderSlot />
-              <PlaceholderSlot />
-            </div>
-          )}
-          {listings && listings.length > 0 && !isRealMatch && (
-            <div className="space-y-2">
-              <p className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-400">
-                This demo currently runs one real worker agent ({category.label}). In the
-                full system, you&apos;d see 3-5 real candidate quotes here to choose from — these
-                two slots are reserved to show that layout, but aren&apos;t live in this build
-                yet.
+            )}
+            {submitError && (
+              <p className="rounded-lg border border-[#7f1d1d77] bg-[#450a0a66] px-3 py-2 text-sm text-[#f87171]">
+                {submitError}
               </p>
-              <PlaceholderSlot />
-              <PlaceholderSlot />
-            </div>
-          )}
-        </section>
-      )}
-
-      {quote && selectedListing && realPriceUsdc !== null && (
-        <section className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900 p-5">
-          <div className="space-y-1">
-            <label htmlFor="title" className="text-sm font-medium text-zinc-300">
-              Task title
-            </label>
-            <input
-              id="title"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              disabled={submitting}
-              className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-60"
-            />
+            )}
           </div>
-          <button
-            type="button"
-            onClick={submitForReal}
-            disabled={submitting || !title.trim()}
-            className="w-full rounded-lg bg-emerald-500 px-4 py-2 font-semibold text-zinc-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {submitting
-              ? "Submitting…"
-              : `Submit for real — commission ${selectedListing.title} for ${formatUsdc(realPriceUsdc)}`}
-          </button>
-          {submitError && <p className="text-sm text-red-400">{submitError}</p>}
-        </section>
-      )}
+        )}
+      </div>
+
+      <AgentRoster agents={agents} />
     </div>
   );
 }
