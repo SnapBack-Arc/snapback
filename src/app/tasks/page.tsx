@@ -14,7 +14,7 @@ export default async function TasksPage() {
   const tasks = wallet ? await getTasksForWallet(wallet.id) : [];
 
   return (
-    <main className="min-h-screen bg-zinc-950">
+    <main className="min-h-screen">
       <Nav email={session.email} />
       <div className="mx-auto max-w-4xl space-y-6 p-6">
         <h1 className="text-2xl font-bold text-white">Task history</h1>

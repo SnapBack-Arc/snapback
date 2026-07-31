@@ -27,7 +27,7 @@ export default async function Home({
   const { prefill } = await searchParams;
 
   return (
-    <main className="min-h-screen bg-zinc-950">
+    <main className="min-h-screen">
       <Nav email={session.email} />
       <TaskSubmissionFlow initialSpecText={prefill} />
     </main>

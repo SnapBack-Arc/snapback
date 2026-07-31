@@ -11,7 +11,7 @@ export default async function DashboardPage() {
   const wallet = await getUserWallet(session.uid);
 
   return (
-    <main className="min-h-screen bg-zinc-950">
+    <main className="min-h-screen">
       <Nav email={session.email} />
       <WalletDashboard initialWallet={wallet} />
     </main>

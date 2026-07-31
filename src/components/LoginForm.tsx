@@ -226,7 +226,7 @@ export default function LoginForm() {
                   if (e.target.value) selectDemoAccount(e.target.value);
                 }}
                 disabled={demoPhase !== "idle"}
-                className="w-full rounded-xl border border-[#3f3f46] bg-[#18181b] px-3 py-2.5 text-sm text-[#fafafa] outline-none transition focus:border-[#10b981] disabled:opacity-60 font-[family-name:var(--font-login-mono)]"
+                className="w-full rounded-xl border border-[#3f3f46] bg-[#18181b] px-3 py-2.5 text-sm text-[#fafafa] outline-none transition focus:border-[#10b981] disabled:opacity-60 font-[family-name:var(--font-app-mono)]"
               >
                 <option value="" disabled>
                   {demoPhase === "sending" ? "Sending code…" : "Select a demo account"}
@@ -342,7 +342,7 @@ function DemoOtpScreen({
           <h2 className="text-lg font-semibold text-[#fafafa]">Enter verification code</h2>
           <p className="text-sm text-[#a1a1aa]">
             We sent a 6-digit code to{" "}
-            <span className="font-[family-name:var(--font-login-mono)] text-[#fafafa]">
+            <span className="font-[family-name:var(--font-app-mono)] text-[#fafafa]">
               {email}
             </span>
             .
@@ -353,7 +353,7 @@ function DemoOtpScreen({
           {MOCK_OTP_DIGITS.map((digit, i) => (
             <div
               key={i}
-              className="flex h-12 w-10 items-center justify-center rounded-xl border border-[#ffffff14] bg-[#18181b73] font-[family-name:var(--font-login-mono)] text-lg text-[#fafafa] backdrop-blur-[28px]"
+              className="flex h-12 w-10 items-center justify-center rounded-xl border border-[#ffffff14] bg-[#18181b73] font-[family-name:var(--font-app-mono)] text-lg text-[#fafafa] backdrop-blur-[28px]"
             >
               {digit}
             </div>

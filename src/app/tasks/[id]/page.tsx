@@ -603,7 +603,7 @@ export default async function TaskDetailPage({
   const contestFeeUsdc = computeContestFee(Number(task.guaranteed_total_usdc ?? 0));
 
   return (
-    <main className="min-h-screen bg-zinc-950">
+    <main className="min-h-screen">
       <Nav email={session.email} />
       <TaskLiveUpdates active={stage !== "settled" && stage !== "refunded"} />
       <div className="mx-auto max-w-3xl space-y-6 p-6">
