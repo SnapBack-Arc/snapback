@@ -3,6 +3,7 @@ import { x402Client } from "@x402/core/client";
 import { x402HTTPClient } from "@x402/core/http";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import type { Address } from "viem";
+import { getLiveDeveloperControlledWalletsClient } from "@/lib/circle";
 import { ensureParallelPayerWallet } from "@/lib/app-wallets";
 import { createCircleEip712Signer } from "@/lib/agents/circle-x402-signer";
 
@@ -45,6 +46,7 @@ export async function payParallelSearch(query: string): Promise<ParallelSearchRe
   const signer = createCircleEip712Signer({
     walletId: wallet.circle_wallet_id,
     address: wallet.address as Address,
+    client: getLiveDeveloperControlledWalletsClient(),
   });
   const httpClient = new x402HTTPClient(
     new x402Client().register(PARALLEL_NETWORK, new ExactEvmScheme(signer)),

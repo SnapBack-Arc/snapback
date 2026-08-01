@@ -1,5 +1,8 @@
 import "server-only";
-import { getLiveDeveloperControlledWalletsClient } from "@/lib/circle";
+import {
+  getDeveloperControlledWalletsClient,
+  getLiveDeveloperControlledWalletsClient,
+} from "@/lib/circle";
 import type { Address, Hex } from "viem";
 
 /**
@@ -62,18 +65,22 @@ export type CircleEip712Signer = {
 
 /**
  * Circle-wallet-backed signer conforming to @x402/evm's ClientEvmSigner
- * interface. Only ever used for the `parallel_payer` wallet, which lives
- * under Circle's live/production entity — hence the live client, not the
- * sandbox one every other wallet in this app signs through.
+ * interface.
+ *
+ * The signer must use the same Circle client instance that created the wallet.
+ * Sandbox-only Arc Testnet wallets use the sandbox client; live Base mainnet
+ * wallets use the live client. This keeps the signing entity aligned with the
+ * wallet's actual location and avoids "wallet not found / inaccessible" errors.
  */
 export function createCircleEip712Signer(params: {
   walletId: string;
   address: Address;
+  client?: ReturnType<typeof getDeveloperControlledWalletsClient>;
 }): CircleEip712Signer {
+  const client = params.client ?? getDeveloperControlledWalletsClient();
   return {
     address: params.address,
     async signTypedData(msg: TypedDataMessage): Promise<Hex> {
-      const client = getLiveDeveloperControlledWalletsClient();
       const domain = toJsonSafe(msg.domain) as Record<string, unknown>;
       const payload = {
         domain,

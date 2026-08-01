@@ -68,6 +68,14 @@ export const ensureDelegateWallet = () => ensureAppWallet("delegate");
 export const ensureTreasuryWallet = () => ensureAppWallet("treasury");
 
 /**
+ * App-funded verification payment (demo) payer for the Arc Testnet Gateway
+ * nanopayment path. This is intentionally an EOA app wallet rather than the
+ * logged-in SCA user wallet, because the Gateway x402 buyer flow requires an
+ * EOA-compatible signer, not an SCA/EIP-1271 wallet.
+ */
+export const ensureGatewayPayerWallet = () => ensureAppWallet("gateway_payer");
+
+/**
  * SnapBackEscrow's on-chain `arbiter` — the only address resolveDispute()
  * accepts calls from. Provisioned as a Circle-managed EOA like
  * delegate/treasury; SnapBackEscrow.arbiter is repointed at its address via
