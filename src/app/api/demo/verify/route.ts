@@ -1,10 +1,7 @@
 import { NextResponse } from "next/server";
-import type { Address } from "viem";
 import { getSession } from "@/lib/session";
 import { getUserWallet } from "@/lib/circle-wallets";
 import { verifyAnswer, demoVerificationFeeUsdc } from "@/lib/agents/verify";
-import { transferUsdc, waitForTxHash } from "@/lib/escrow";
-import { ensureTreasuryWallet } from "@/lib/app-wallets";
 import { createServiceSupabase } from "@/lib/supabase/server";
 import { ARC_CHAIN_ID } from "@/lib/arc";
 import {
@@ -54,13 +51,11 @@ export async function POST(request: Request) {
   const paymentSignatureHeader =
     request.headers.get("PAYMENT-SIGNATURE") ??
     request.headers.get("X-PAYMENT") ??
-    request.headers.get("payment-signature") ??
-    request.headers.get("x-payment") ??
     null;
 
   const { paymentRequiredHeader } = await getDemoVerificationPaymentRequiredHeader();
 
-  let settlement: { success?: boolean; errorReason?: string } | null = null;
+  let settlement: { success?: boolean; errorReason?: string; transaction?: string } | null = null;
   if (!paymentSignatureHeader) {
     try {
       const signedPayment = await createDemoVerificationPaymentSignature();
@@ -98,23 +93,17 @@ export async function POST(request: Request) {
   const feeUsdc = demoVerificationFeeUsdc();
   const supabase = createServiceSupabase();
   try {
-    const treasury = await ensureTreasuryWallet();
-    const txId = await transferUsdc(wallet.circle_wallet_id, treasury.address as Address, String(feeUsdc));
-    if (!txId) {
-      throw new Error("Verification fee transfer did not return a transaction id");
-    }
-    const txHash = await waitForTxHash(txId);
     await supabase.from("payments").insert({
       from_wallet_id: wallet.id,
       kind: "verification_fee",
       status: "released",
       amount_usdc: feeUsdc,
-      tx_hash: txHash,
+      tx_hash: settlement?.transaction ?? null,
       chain_id: ARC_CHAIN_ID,
       metadata: { reason: "demo_verify_fee" },
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to charge the verification fee";
+    const message = err instanceof Error ? err.message : "Failed to record the verification fee payment";
     return NextResponse.json({ error: message }, { status: 502 });
   }
 

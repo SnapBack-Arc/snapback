@@ -7,8 +7,13 @@ import type { Address, Hex } from "viem";
 
 /**
  * Bridges Circle's Developer-Controlled Wallets `signTypedData` API into the
- * generic `{ address, signTypedData }` signer shape `@x402/evm`'s
- * `ExactEvmScheme` expects (see @x402/evm/exact/client's `ClientEvmSigner`).
+ * generic `{ address, signTypedData }` signer shape both `@x402/evm`'s
+ * `ExactEvmScheme` and `@circle-fin/x402-batching`'s `BatchEvmScheme` expect
+ * (see @x402/evm/exact/client's `ClientEvmSigner` and that package's
+ * `BatchEvmSigner` — structurally identical). Used with `ExactEvmScheme` for
+ * the plain x402 payment to Parallel (parallel-client.ts) and, via
+ * `registerBatchScheme`, with `BatchEvmScheme` for Circle Gateway's batched
+ * GatewayWalletBatched payments (lib/gateway/verify-payment.ts).
  *
  * Circle's wallet never hands out a raw private key — `signTypedData` signs
  * whatever EIP-712 payload it's given, using the wallet's key held in
@@ -17,7 +22,7 @@ import type { Address, Hex } from "viem";
  * model this app's `escrow.ts` already uses for real on-chain transfers).
  * No human approval step exists anywhere in this path.
  *
- * `@x402/evm` builds its typed-data message as `{domain, types, primaryType,
+ * Both schemes build their typed-data message as `{domain, types, primaryType,
  * message}` WITHOUT a `types.EIP712Domain` entry (viem-style signers derive
  * that internally) — Circle's REST API needs a fully standard
  * eth_signTypedData_v4 JSON document, so this adapter synthesizes
