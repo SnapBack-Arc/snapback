@@ -17,7 +17,24 @@ type ResearchDeliverable = {
 type VerifyVerdict = {
   verdict: "CORRECT" | "INCORRECT";
   reasoning: string;
+  payoutUsdc: number;
+  site: string;
 };
+
+type NanopaymentInfo = {
+  paymentId: string | null;
+  amountUsdc: number;
+  site: string;
+};
+
+function formatSmallUsdc(value: number): string {
+  if (value === 0) return "$0.00";
+  if (value < 0.005) {
+    const trimmed = value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+    return `$${trimmed}`;
+  }
+  return `$${value.toFixed(2)}`;
+}
 
 /** Honest "working" indicator for a real, variable-duration LLM call — a
  * sliding fill, not a fake percentage or countdown. Shared by the "Get
@@ -70,6 +87,7 @@ export default function VerifyFlow() {
 
   const [answering, setAnswering] = useState(false);
   const [answerResult, setAnswerResult] = useState<ResearchDeliverable | null>(null);
+  const [nanopayment, setNanopayment] = useState<NanopaymentInfo | null>(null);
   const [answerError, setAnswerError] = useState<string | null>(null);
 
   const [verifying, setVerifying] = useState(false);
@@ -90,6 +108,7 @@ export default function VerifyFlow() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to get an answer");
       setAnswerResult(body.deliverable as ResearchDeliverable);
+      setNanopayment(body.nanopayment as NanopaymentInfo);
     } catch (err) {
       setAnswerError(err instanceof Error ? err.message : "Failed to get an answer");
     } finally {
@@ -105,11 +124,16 @@ export default function VerifyFlow() {
       const res = await fetch("/api/demo/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instruction, deliverable: answerResult }),
+        body: JSON.stringify({ instruction, deliverable: answerResult, nanopayment }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Verification failed");
-      setVerifyResult({ verdict: body.verdict, reasoning: body.reasoning });
+      setVerifyResult({
+        verdict: body.verdict,
+        reasoning: body.reasoning,
+        payoutUsdc: body.payoutUsdc,
+        site: body.site,
+      });
     } catch (err) {
       setVerifyError(err instanceof Error ? err.message : "Verification failed");
     } finally {
@@ -121,6 +145,7 @@ export default function VerifyFlow() {
     setInstruction("");
     setAnswering(false);
     setAnswerResult(null);
+    setNanopayment(null);
     setAnswerError(null);
     setVerifying(false);
     setVerifyResult(null);
@@ -136,7 +161,8 @@ export default function VerifyFlow() {
       <div className="space-y-2 text-center">
         <h1 className="text-3xl font-semibold tracking-tight text-[#fafafa]">Try SnapBack</h1>
         <p className="text-sm text-[#a1a1aa]">
-          Get a free answer from a real agent, then have it verified for real.
+          A real agent pays another agent to answer this — a real nanopayment, insured. Verify it,
+          and a wrong answer gets you paid back.
         </p>
       </div>
 
@@ -165,16 +191,26 @@ export default function VerifyFlow() {
               Agent&apos;s result
             </label>
             {answerResult ? (
-              <DeliverableView deliverable={answerResult} />
+              <>
+                <DeliverableView deliverable={answerResult} />
+                {nanopayment && (
+                  <p className="text-xs text-[#71717a]">
+                    Real nanopayment: {formatSmallUsdc(nanopayment.amountUsdc)} agent-to-agent to{" "}
+                    {nanopayment.site}
+                    {nanopayment.amountUsdc === 0 && " (payment failed — fell back to free web search)"}
+                  </p>
+                )}
+              </>
             ) : answering ? (
-              <ProgressBar label="Working — a free agent is researching this. This genuinely takes a variable amount of time." />
+              <ProgressBar label="Working — an agent is paying another agent to research this, for real." />
             ) : answerError ? (
               <p className="rounded-lg border border-[#7f1d1d77] bg-[#450a0a66] px-3 py-2 text-sm text-[#f87171]">
                 {answerError}
               </p>
             ) : (
               <div className="w-full cursor-not-allowed select-none rounded-xl border border-dashed border-[#3f3f46] bg-[#18181b]/40 px-3 py-8 text-center text-sm italic text-[#71717a]">
-                Not available yet — click Get Answer to have a free agent research this for you.
+                Not available yet — click Get Answer to have an agent pay another agent to research
+                this for you.
               </div>
             )}
           </div>
@@ -228,9 +264,16 @@ export default function VerifyFlow() {
             <p className="text-sm text-[#a1a1aa]">{verifyResult.reasoning}</p>
             {verifyResult.verdict === "INCORRECT" && (
               <p className="text-xs text-[#71717a]">
-                Refunded $0.00 — the data behind this answer was free, so there&apos;s nothing to
-                refund here. In a full deployment, you&apos;d be refunded what the data source
-                charged.
+                {verifyResult.payoutUsdc > 0 ? (
+                  <>
+                    Insured: {formatSmallUsdc(verifyResult.payoutUsdc)} paid back to your wallet —
+                    priced off {verifyResult.site}&apos;s real correctness track record across every
+                    SnapBack user. A site that&apos;s almost always right pays more on a rare miss; a
+                    site that&apos;s often wrong pays less, since a miss there is unsurprising.
+                  </>
+                ) : (
+                  <>Nothing to insure — this nanopayment&apos;s real charge was $0.00.</>
+                )}
               </p>
             )}
           </div>

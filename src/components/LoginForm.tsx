@@ -40,7 +40,7 @@ const DEMO_ACCOUNTS: DemoOption[] = [
     persona: "test",
     email: DEMO_TEST_ACCOUNT_EMAIL,
     label: `${DEMO_TEST_ACCOUNT_EMAIL} — existing activity`,
-    destination: "/wallet",
+    destination: "/dash",
   },
   {
     key: "test-admin",
@@ -147,7 +147,7 @@ export default function LoginForm() {
           setPhase("idle");
           return;
         }
-        router.push("/wallet");
+        router.push("/dash");
         router.refresh();
       };
 

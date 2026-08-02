@@ -59,7 +59,7 @@ export function AuroraBackground() {
   return (
     <div
       className="aurora-bg fixed inset-0 z-0 overflow-hidden pointer-events-none"
-      style={{ background: "#09090b" }}
+      style={{ background: "var(--background)" }}
     >
       {orbs.map((b, i) => (
         <div
@@ -80,14 +80,14 @@ export function AuroraBackground() {
         className="aurora-grid absolute inset-0"
         style={{
           backgroundImage:
-            "linear-gradient(#ffffff14 1px, transparent 1px), linear-gradient(90deg, #ffffff14 1px, transparent 1px)",
+            "linear-gradient(var(--glass-border) 1px, transparent 1px), linear-gradient(90deg, var(--glass-border) 1px, transparent 1px)",
           backgroundSize: "48px 48px",
         }}
       />
       <div
         className="absolute inset-0"
         style={{
-          background: "radial-gradient(ellipse at 50% 0%, transparent 0%, transparent 60%, #09090b 130%)",
+          background: "radial-gradient(ellipse at 50% 0%, transparent 0%, transparent 60%, var(--background) 130%)",
         }}
       />
     </div>

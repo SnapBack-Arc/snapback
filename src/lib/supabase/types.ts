@@ -29,6 +29,7 @@ export type InsurancePoolAdjustmentRow = Tables["insurance_pool_adjustments"]["R
 export type BuyerDisputeStatsRow = Tables["buyer_dispute_stats"]["Row"];
 export type JobEventRow = Tables["job_events"]["Row"];
 export type WebhookNotificationLogRow = Tables["webhook_notifications_log"]["Row"];
+export type NanopaymentValidationRow = Tables["nanopayment_validations"]["Row"];
 
 export type TaskStatus = Enums["task_status"];
 export type PaymentStatus = Enums["payment_status"];
@@ -39,3 +40,4 @@ export type VoteChoice = Enums["vote_choice"];
 export type WalletControl = Enums["wallet_control"];
 export type AdminAction = Enums["admin_action"];
 export type InsurancePoolDirection = Enums["insurance_pool_direction"];
+export type ValidationVerdict = Enums["validation_verdict"];

@@ -26,6 +26,16 @@ body {
   color: var(--foreground);
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
 @utility glass-card {
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
@@ -50,3 +60,71 @@ body {
 @utility progress-indeterminate-bar {
   animation: progress-indeterminate 1.4s ease-in-out infinite;
 }
+
+/* ─────────────────────────────────────────────────────────────
+ * Light theme.
+ *
+ * Every page/component in this app hardcodes dark-theme colors directly
+ * (Tailwind arbitrary hex values and zinc-scale utilities), not semantic
+ * tokens — there was no light mode to design for when they were written.
+ * Rather than rewrite every className across the app, this block
+ * re-targets the exact compiled utility classes already in use, scoped
+ * under [data-theme="light"] on <html> (set by the theme toggle in
+ * Settings — see components/ThemeToggle.tsx and the inline script in
+ * layout.tsx that applies the saved preference before paint).
+ *
+ * This is un-layered CSS (not inside Tailwind's @layer), so it wins over
+ * the layered utilities regardless of selector specificity — no
+ * !important needed, just correct class-name escaping.
+ * ───────────────────────────────────────────────────────────── */
+
+:root[data-theme="light"] {
+  --background: #fafafa;
+  --foreground: #09090b;
+  --glass-bg: #f4f4f573;
+  --glass-border: #00000014;
+  --glass-border-strong: #0000001c;
+}
+
+/* Backgrounds meant to read as "dark surface" — flipped to light surfaces. */
+:root[data-theme="light"] .bg-\[\#09090b\] { background-color: #fafafa; }
+:root[data-theme="light"] .bg-\[\#0c0c0e\] { background-color: #fafafa; }
+:root[data-theme="light"] .bg-\[\#0c0c0eb3\] { background-color: #ffffffb3; }
+:root[data-theme="light"] .bg-\[\#111113cc\] { background-color: #ffffffcc; }
+:root[data-theme="light"] .bg-\[\#18181b73\] { background-color: #f4f4f573; }
+:root[data-theme="light"] .bg-\[\#18181b\] { background-color: #f4f4f5; }
+:root[data-theme="light"] .bg-\[\#18181bf2\] { background-color: #f4f4f5f2; }
+:root[data-theme="light"] .bg-\[\#450a0a66\] { background-color: #fee2e266; }
+:root[data-theme="light"] .bg-\[\#ffffff0a\] { background-color: #00000008; }
+:root[data-theme="light"] .bg-\[\#ffffff14\] { background-color: #00000014; }
+:root[data-theme="light"] .hover\:bg-\[\#ffffff0a\]:hover { background-color: #00000008; }
+:root[data-theme="light"] .bg-zinc-900 { background-color: #f4f4f5; }
+:root[data-theme="light"] .bg-zinc-950 { background-color: #fafafa; }
+:root[data-theme="light"] .bg-zinc-800 { background-color: #f4f4f5; }
+:root[data-theme="light"] .bg-zinc-700\/40 { background-color: #00000014; }
+:root[data-theme="light"] .hover\:bg-zinc-900:hover { background-color: #f4f4f5; }
+:root[data-theme="light"] .hover\:bg-zinc-700:hover { background-color: #d4d4d8; }
+
+/* Borders/dividers meant to read as a subtle line on dark — darkened to
+   read the same way on light. */
+:root[data-theme="light"] .border-\[\#3f3f46\] { border-color: #d4d4d8; }
+:root[data-theme="light"] .border-\[\#7f1d1d77\] { border-color: #fca5a577; }
+:root[data-theme="light"] .border-\[\#ffffff0a\] { border-color: #00000008; }
+:root[data-theme="light"] .border-\[\#ffffff14\] { border-color: #00000014; }
+:root[data-theme="light"] .border-\[\#ffffff1c\] { border-color: #0000001c; }
+:root[data-theme="light"] .divide-\[\#ffffff14\] > :not([hidden]) ~ :not([hidden]) { border-color: #00000014; }
+:root[data-theme="light"] .border-zinc-800 { border-color: #e4e4e7; }
+:root[data-theme="light"] .border-zinc-700 { border-color: #d4d4d8; }
+:root[data-theme="light"] .divide-zinc-800 > :not([hidden]) ~ :not([hidden]) { border-color: #e4e4e7; }
+:root[data-theme="light"] .hover\:border-zinc-700:hover { border-color: #a1a1aa; }
+
+/* Text meant to read as light-on-dark — darkened to read on a light surface. */
+:root[data-theme="light"] .text-\[\#fafafa\] { color: #09090b; }
+:root[data-theme="light"] .text-\[\#a1a1aa\] { color: #52525b; }
+:root[data-theme="light"] .hover\:text-\[\#fafafa\]:hover { color: #09090b; }
+:root[data-theme="light"] .text-white { color: #09090b; }
+:root[data-theme="light"] .text-zinc-100 { color: #27272a; }
+:root[data-theme="light"] .text-zinc-200 { color: #3f3f46; }
+:root[data-theme="light"] .text-zinc-300 { color: #52525b; }
+:root[data-theme="light"] .text-zinc-400 { color: #52525b; }
+:root[data-theme="light"] .hover\:text-zinc-300:hover { color: #27272a; }

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import AuroraBackground from "@/components/aurora/AuroraBackgroundClient";
 import { isDemoModeEnabled } from "@/lib/demo/config";
@@ -10,7 +11,7 @@ const jetbrainsMono = JetBrains_Mono({ variable: "--font-app-mono", subsets: ["l
 export const metadata: Metadata = {
   title: "SnapBack",
   description:
-    "SnapBack is a dispute-resolution and escrow safety layer for agent-to-agent USDC payments, with an AI judge panel that settles disagreements autonomously — built on Arc.",
+    "SnapBack insures agent-to-agent nanopayments — a real AI verdict on every paid answer, with an automatic, reliability-priced payout the moment it's flagged wrong. Built on Arc.",
 };
 
 export default function RootLayout({
@@ -24,6 +25,19 @@ export default function RootLayout({
       className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col font-sans">
+        {/* Applies a saved theme preference before hydration, so there's no
+            flash of the default (dark) theme on a light-mode visit. See
+            components/ThemeToggle.tsx, which is what writes this key. */}
+        <Script id="theme-init" strategy="beforeInteractive">
+          {`(function(){try{var t=localStorage.getItem('theme');if(t==='light'||t==='dark'){document.documentElement.setAttribute('data-theme',t);}}catch(e){}})();`}
+        </Script>
+        {/* A hard reload (F5, Ctrl+R) always signs the user out and sends
+            them back to the info page — every session starts fresh. Uses the
+            Navigation Timing API to tell a real reload apart from a normal
+            link/redirect navigation, which the server has no way to see. */}
+        <Script id="reload-guard" strategy="beforeInteractive">
+          {`(function(){try{var nav=performance.getEntriesByType('navigation')[0];if(nav&&nav.type==='reload'){fetch('/api/auth/session',{method:'DELETE',keepalive:true}).catch(function(){});if(location.pathname!=='/home'){location.replace('/home');}}}catch(e){}})();`}
+        </Script>
         <AuroraBackground />
         <div className="relative z-10 flex min-h-full flex-1 flex-col">{children}</div>
         {isDemoModeEnabled() && (

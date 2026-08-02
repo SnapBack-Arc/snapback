@@ -1,67 +1,62 @@
 import Link from "next/link";
-import JourneyDiagram from "./JourneyDiagram";
 
 const HOW_IT_WORKS = [
   {
     step: "1",
-    title: "Commission a task",
-    body: "Describe what you need, get a price that already includes protection.",
+    title: "An agent pays another agent",
+    body: "One agent pays a live data source in USDC for an answer — an agent-to-agent transaction, not a user checkout.",
   },
   {
     step: "2",
-    title: "AI checks the work",
-    body: "Before you're ever charged for real, a validator reviews it against what was promised.",
+    title: "SnapBack checks the answer",
+    body: "An AI judge reviews what was paid for against what was actually asked, and rules correct or incorrect.",
   },
   {
     step: "3",
-    title: "Bad work? You're covered",
-    body: "If it doesn't hold up, an independent AI judge panel reviews it and refunds you automatically. No arguing, no waiting on a human.",
+    title: "Wrong? You're insured",
+    body: "Flagged incorrect and you're paid back automatically, on the spot — priced off that source's track record across every SnapBack user, not a flat refund.",
   },
 ];
 
 const WHY_THIS_BEATS = [
   {
     lead: "No subscription.",
-    body: "You're not paying a flat fee every month hoping it's worth it. You pay a small amount only on the transactions you actually make.",
+    body: "You pay a small validation fee only when you actually check an answer — nothing recurring.",
   },
   {
-    lead: "The cost is proportional.",
-    body: "Real tasks here run in cents, not dollars — and the protection scales with them. You're never paying enterprise-level fees to protect something that costs a fraction of a dollar to begin with.",
+    lead: "The payout is priced by reliability.",
+    body: "A rare miss on a source that's almost always right pays more; a miss on a source that's often wrong pays less, since that's already expected. Priced from data gathered across every SnapBack user, not a flat number.",
   },
   {
-    lead: "No lawyers, no arbitration fees.",
-    body: "Disputes are resolved by AI in minutes, not a costly, slow legal process — that protection is already built into the small fee you pay.",
-  },
-  {
-    lead: "Automatic, not manual.",
-    body: "You don't file a claim and wait. If the panel rules in your favor, the refund happens on its own.",
+    lead: "Fully automatic.",
+    body: "The payout happens the moment the verdict comes back wrong — you don't ask for it.",
   },
 ];
 
 const BUILT_ON = [
   {
-    title: "Circle Developer-Controlled Wallets",
-    body: "Real wallets for Treasury, the arbiter, the seller, and the agent's own payment wallet, all custodied and signed server-side.",
+    title: "x402 protocol",
+    body: "The nanopayment mechanism SnapBack insures — a research agent pays a live data source in USDC for every answer it validates.",
   },
   {
     title: "Circle User-Controlled Wallets",
-    body: "Real buyer wallets, created via genuine email OTP sign-in, no password.",
+    body: "Buyer wallets created through email OTP sign-in — no seed phrase, no password.",
   },
   {
-    title: "Circle Smart Contract Platform",
-    body: "Every real fund, release, refund, and dispute resolution is an actual on-chain contract call through Circle's execution API.",
+    title: "Circle Developer-Controlled Wallets",
+    body: "Server-signed wallets for the Treasury and the paying agent, custodied by Circle.",
+  },
+  {
+    title: "On-chain settlement",
+    body: "The validation fee and the insurance payout both settle as Circle-signed USDC transfers on Arc Testnet — not internal ledger entries.",
   },
   {
     title: "Circle Gateway",
-    body: "Real wallet deposits, letting a user fund their balance without manually bridging.",
+    body: "A user deposits USDC once, and every nanopayment after that settles gaslessly — signed off-chain, batched on-chain, no per-transaction gas.",
   },
   {
-    title: "x402 protocol",
-    body: "A real agent-to-agent payment: the system's own research agent pays another live service in real USDC for the data it uses.",
-  },
-  {
-    title: "Arc Testnet",
-    body: "The whole escrow and dispute contract runs live on Circle's own L1, built for exactly this kind of agent-native activity.",
+    title: "Nanopayments",
+    body: "SnapBack is entirely built around one trigger: an agent paying another agent, not a user paying an agent. No agent-to-agent nanopayment, nothing for SnapBack to activate on, insure, or price.",
   },
 ];
 
@@ -83,29 +78,23 @@ export default function HomeMarketing() {
       </header>
 
       {/* Hero */}
-      <section className="mx-auto grid max-w-[1600px] grid-cols-2 items-center gap-16 px-16 py-16">
-        <div className="space-y-6">
-          <h1 className="text-4xl font-semibold leading-tight tracking-tight text-[#fafafa]">
-            Protection that only costs something when you need it
-          </h1>
-          <p className="text-lg leading-relaxed text-[#a1a1aa]">
-            Most safety nets make you pay whether or not anything goes wrong. SnapBack
-            doesn&apos;t. You pay a small amount tied to what you&apos;re actually spending — and
-            if the work turns out bad, you get your money back automatically. No
-            subscription, no monthly fee, no paying for protection you might never use.
-          </p>
-          <div className="flex items-center gap-4 pt-2">
-            <Link
-              href="/login"
-              className="rounded-xl bg-[#10b981] px-5 py-2.5 font-semibold text-[#052e1f] transition hover:bg-[#34d399]"
-            >
-              Get started
-            </Link>
-          </div>
-        </div>
-
-        <div className="flex justify-center rounded-2xl border border-[#ffffff1c] bg-[#111113cc] p-6 backdrop-blur-[24px]">
-          <JourneyDiagram />
+      <section className="mx-auto max-w-[900px] space-y-6 px-16 py-24 text-center">
+        <h1 className="text-4xl font-semibold leading-tight tracking-tight text-[#fafafa]">
+          Insurance for agent-to-agent nanopayments
+        </h1>
+        <p className="mx-auto max-w-[640px] text-lg leading-relaxed text-[#a1a1aa]">
+          SnapBack activates the moment one agent pays another for an answer. A real AI judge
+          checks whether that answer holds up — and if it doesn&apos;t, you get paid back
+          automatically, priced by how reliable that source has actually been across every
+          SnapBack user. No subscription, no disputes, no waiting.
+        </p>
+        <div className="flex items-center justify-center gap-4 pt-2">
+          <Link
+            href="/login"
+            className="rounded-xl bg-[#10b981] px-5 py-2.5 font-semibold text-[#052e1f] transition hover:bg-[#34d399]"
+          >
+            Get started
+          </Link>
         </div>
       </section>
 
@@ -159,29 +148,10 @@ export default function HomeMarketing() {
               <p className="flex-1 text-sm leading-relaxed text-[#a1a1aa]">{item.body}</p>
             </div>
           ))}
-
-          {/* Visually distinct — real integration path exists (SDK installed,
-              matching signer infra built, correct contracts deployed) but not
-              yet built/proven end-to-end. Deliberately not blended in with
-              the six confirmed-real items above — same full-width bar shape,
-              different surface treatment. */}
-          <div className="flex items-center gap-6 rounded-xl border border-dashed border-[#f59e0b66] bg-[#f59e0b0f] p-6">
-            <div className="w-72 shrink-0 space-y-1">
-              <p className="font-semibold italic text-[#f59e0b]">Nanopayments (powered by Circle Gateway)</p>
-              <span className="inline-block rounded-full border border-[#f59e0b66] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#f59e0b]">
-                Coming soon
-              </span>
-            </div>
-            <p className="flex-1 text-sm italic leading-relaxed text-[#a1a1aa]">
-              Not yet live. The real integration path exists — SDK already installed,
-              matching signer infrastructure already built, correct contracts already
-              deployed — but it hasn&apos;t been built and proven end-to-end yet.
-            </p>
-          </div>
         </div>
       </section>
 
-      <footer className="mx-auto max-w-[1600px] px-16 py-12 text-center text-xs text-[#52525b]">
+      <footer className="mx-auto max-w-[1600px] border-t border-[#ffffff14] px-16 py-8 text-center text-sm text-[#a1a1aa]">
         Powered by Circle User-Controlled Wallets · Arc Testnet
       </footer>
     </div>

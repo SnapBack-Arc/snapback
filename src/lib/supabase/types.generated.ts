@@ -548,6 +548,80 @@ export type Database = {
           },
         ]
       }
+      nanopayment_validations: {
+        Row: {
+          created_at: string
+          id: string
+          instruction: string
+          nanopayment_payment_id: string | null
+          nanopayment_usdc: number
+          payout_payment_id: string | null
+          payout_usdc: number
+          site: string
+          validation_fee_payment_id: string | null
+          validation_fee_usdc: number
+          verdict: Database["public"]["Enums"]["validation_verdict"]
+          wallet_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          instruction: string
+          nanopayment_payment_id?: string | null
+          nanopayment_usdc?: number
+          payout_payment_id?: string | null
+          payout_usdc?: number
+          site: string
+          validation_fee_payment_id?: string | null
+          validation_fee_usdc?: number
+          verdict: Database["public"]["Enums"]["validation_verdict"]
+          wallet_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          instruction?: string
+          nanopayment_payment_id?: string | null
+          nanopayment_usdc?: number
+          payout_payment_id?: string | null
+          payout_usdc?: number
+          site?: string
+          validation_fee_payment_id?: string | null
+          validation_fee_usdc?: number
+          verdict?: Database["public"]["Enums"]["validation_verdict"]
+          wallet_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "nanopayment_validations_nanopayment_payment_id_fkey"
+            columns: ["nanopayment_payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "nanopayment_validations_payout_payment_id_fkey"
+            columns: ["payout_payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "nanopayment_validations_validation_fee_payment_id_fkey"
+            columns: ["validation_fee_payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "nanopayment_validations_wallet_id_fkey"
+            columns: ["wallet_id"]
+            isOneToOne: false
+            referencedRelation: "wallets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       payments: {
         Row: {
           amount_usdc: number
@@ -1153,6 +1227,7 @@ export type Database = {
         | "resolved"
         | "cancelled"
       validation_outcome: "approved" | "disputed"
+      validation_verdict: "correct" | "incorrect"
       vote_choice: "favor_payer" | "favor_payee" | "abstain"
       wallet_control: "developer" | "user"
     }
@@ -1294,7 +1369,13 @@ export const Constants = {
         "insurance_pool_withdraw",
         "reset_demo_test_account",
       ],
-      app_wallet_role: ["delegate", "treasury", "arbiter", "parallel_payer", "gateway_payer"],
+      app_wallet_role: [
+        "delegate",
+        "treasury",
+        "arbiter",
+        "parallel_payer",
+        "gateway_payer",
+      ],
       dispute_kind: ["standard", "post_approval_contest"],
       dispute_outcome: ["pending", "favor_payer", "favor_payee", "split"],
       dispute_status: [
@@ -1363,6 +1444,7 @@ export const Constants = {
         "cancelled",
       ],
       validation_outcome: ["approved", "disputed"],
+      validation_verdict: ["correct", "incorrect"],
       vote_choice: ["favor_payer", "favor_payee", "abstain"],
       wallet_control: ["developer", "user"],
     },

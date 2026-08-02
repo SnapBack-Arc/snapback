@@ -116,7 +116,7 @@ export default function WalletDashboard({
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1600px] space-y-6 px-16 py-12">
+    <div className="mx-auto w-full space-y-6 px-[clamp(1rem,3vw,4rem)] py-12">
       <h1 className="text-2xl font-bold text-[#fafafa]">Wallet</h1>
 
       {!wallet ? (
@@ -228,14 +228,7 @@ export default function WalletDashboard({
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
             <StatCard label="Lifetime deposits" value={formatDollars(lifetimeDepositsUsdc)} />
             <StatCard label="Lifetime paid back" value={formatDollars(lifetimePaidBackUsdc)} valueClass="text-emerald-400" />
-            <StatCard
-              label="Wallet since"
-              value={
-                wallet.created_at
-                  ? new Date(wallet.created_at).toLocaleDateString(undefined, { month: "short", year: "numeric" })
-                  : "—"
-              }
-            />
+            <StatCard label="Lifetime transactions" value={payments.length.toLocaleString()} />
           </div>
 
           {/* Transaction history */}
