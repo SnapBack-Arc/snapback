@@ -54,3 +54,8 @@ contracts/broadcast/
 # Supabase CLI local cache/link state
 supabase/.temp/
 recovery_file_*.dat
+
+# Internal Claude Code instructions — kept locally for future sessions,
+# not part of the public repo
+/AGENTS.md
+/CLAUDE.md
