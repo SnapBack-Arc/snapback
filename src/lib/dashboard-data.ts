@@ -36,7 +36,7 @@ export type DashboardData = {
   paidBackThisMonthUsdc: number;
   flaggedNanopaymentsThisMonthCount: number;
   flaggedTodayPct: number | null;
-  flaggedTodayTotal: number;
+  flaggedTodayCount: number;
   flagRateLast7Days: FlagRateDay[];
   recentTransactions: RecentTransaction[];
 };
@@ -110,7 +110,7 @@ export async function getDashboardData(walletId: string): Promise<DashboardData>
     paidBackThisMonthUsdc,
     flaggedNanopaymentsThisMonthCount,
     flaggedTodayPct,
-    flaggedTodayTotal: todayRows.length,
+    flaggedTodayCount: todayFlagged.length,
     flagRateLast7Days,
     recentTransactions,
   };

@@ -33,7 +33,7 @@ export default async function DashboardPage() {
         paidBackThisMonthUsdc: 0,
         flaggedNanopaymentsThisMonthCount: 0,
         flaggedTodayPct: null,
-        flaggedTodayTotal: 0,
+        flaggedTodayCount: 0,
         flagRateLast7Days: [],
         recentTransactions: [],
       };
@@ -81,7 +81,7 @@ export default async function DashboardPage() {
                   }
                 />
 
-                <FlagRing pct={data.flaggedTodayPct} total={data.flaggedTodayTotal} />
+                <FlagRing pct={data.flaggedTodayPct} flaggedCount={data.flaggedTodayCount} />
 
                 <StatCard
                   label="Paid back this month"
@@ -181,7 +181,7 @@ function StatCard({
   );
 }
 
-function FlagRing({ pct, total }: { pct: number | null; total: number }) {
+function FlagRing({ pct, flaggedCount }: { pct: number | null; flaggedCount: number }) {
   const displayPct = pct ?? 0;
   return (
     <div className="glass-card flex items-center gap-4 p-5">
@@ -199,7 +199,7 @@ function FlagRing({ pct, total }: { pct: number | null; total: number }) {
       </div>
       <div>
         <div className="text-xs uppercase tracking-wide text-[#71717a]">Flagged today</div>
-        <div className="text-xs text-[#71717a]">{total.toLocaleString()} txns</div>
+        <div className="text-xs text-[#71717a]">{flaggedCount.toLocaleString()} txns</div>
       </div>
     </div>
   );
