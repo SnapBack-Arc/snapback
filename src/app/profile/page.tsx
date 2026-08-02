@@ -6,6 +6,8 @@ import { getUserWallet } from "@/lib/circle-wallets";
 import { getProfileData } from "@/lib/profile-data";
 import { shortAddress } from "@/lib/format";
 import { ARC_EXPLORER_URL } from "@/lib/arc";
+import { getAdminSeq } from "@/lib/admin";
+import { formatUserId } from "@/lib/user-id";
 
 export default async function ProfilePage() {
   const session = await getSession();
@@ -13,6 +15,9 @@ export default async function ProfilePage() {
 
   const wallet = await getUserWallet(session.uid);
   const data = await getProfileData(session.uid, wallet?.id ?? null);
+  const adminSeq = wallet ? getAdminSeq(wallet.address) : null;
+  const userId =
+    adminSeq !== null ? formatUserId(adminSeq, true) : formatUserId(data.userSeq, false);
 
   return (
     <main className="min-h-screen">
@@ -54,6 +59,10 @@ export default async function ProfilePage() {
             <div>
               <div className="text-xs uppercase tracking-wide text-[#71717a]">Network</div>
               <div className="mt-1 text-sm text-[#fafafa]">{wallet?.blockchain ?? "—"}</div>
+            </div>
+            <div>
+              <div className="text-xs uppercase tracking-wide text-[#71717a]">User ID</div>
+              <div className="mt-1 font-mono text-sm text-[#fafafa]">{userId}</div>
             </div>
           </div>
           <div className="border-t border-[#ffffff14] pt-4">

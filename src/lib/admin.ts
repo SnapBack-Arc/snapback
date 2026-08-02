@@ -13,17 +13,27 @@ import type { WalletRow } from "@/lib/supabase/types";
  * server-side reads already go through the service-role client, which bypasses
  * RLS entirely; access control lives here, in application code.
  */
-function adminAddresses(): Set<string> {
-  return new Set(
-    (process.env.ADMIN_WALLET_ADDRESSES ?? "")
-      .split(",")
-      .map((a) => a.trim().toLowerCase())
-      .filter(Boolean),
-  );
+function adminAddressList(): string[] {
+  return (process.env.ADMIN_WALLET_ADDRESSES ?? "")
+    .split(",")
+    .map((a) => a.trim().toLowerCase())
+    .filter(Boolean);
 }
 
 export function isAdminAddress(address: string): boolean {
-  return adminAddresses().has(address.toLowerCase());
+  return adminAddressList().includes(address.toLowerCase());
+}
+
+/**
+ * An admin's own sequence number — 1 for whichever address is listed first
+ * in ADMIN_WALLET_ADDRESSES, 2 for the next, etc. Deliberately separate from
+ * users.user_seq: an admin's display ID counts "which admin is this" (there
+ * might only be 3), not "which of the thousands of regular signups is this".
+ * Null if the address isn't an admin at all.
+ */
+export function getAdminSeq(address: string): number | null {
+  const idx = adminAddressList().indexOf(address.toLowerCase());
+  return idx === -1 ? null : idx + 1;
 }
 
 /** Redirects away unless the caller is logged in with an allowlisted admin wallet. */
@@ -32,7 +42,7 @@ export async function requireAdmin() {
   if (!session) redirect("/login");
 
   const wallet = await getUserWallet(session.uid);
-  if (!wallet || !isAdminAddress(wallet.address)) redirect("/wallet");
+  if (!wallet || !isAdminAddress(wallet.address)) redirect("/admin-denied");
 
   return { session, wallet };
 }

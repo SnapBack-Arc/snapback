@@ -949,6 +949,7 @@ export type Database = {
           email: string
           id: string
           updated_at: string
+          user_seq: number | null
         }
         Insert: {
           circle_user_id?: string | null
@@ -957,6 +958,7 @@ export type Database = {
           email: string
           id?: string
           updated_at?: string
+          user_seq?: number | null
         }
         Update: {
           circle_user_id?: string | null
@@ -965,6 +967,7 @@ export type Database = {
           email?: string
           id?: string
           updated_at?: string
+          user_seq?: number | null
         }
         Relationships: []
       }

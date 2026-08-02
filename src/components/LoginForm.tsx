@@ -3,10 +3,10 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { DEMO_TEST_ACCOUNT_EMAIL } from "@/lib/demo/config";
+import { DEMO_TEST_ACCOUNT_EMAIL, DEMO_ADMIN_ACCOUNT_EMAIL } from "@/lib/demo/config";
 
 type Phase = "idle" | "sending" | "awaiting_otp" | "finishing";
-type DemoPersona = "test" | "new";
+type DemoPersona = "test" | "new" | "admin";
 /** Mirrors the real flow's sending -> awaiting_otp -> finishing beats. */
 type DemoPhase = "idle" | "sending" | "otp" | "confirming";
 
@@ -28,26 +28,25 @@ type DemoOption = {
   destination: string;
 };
 
-// There is only ONE real demo account/wallet (testAccount@snapback.com,
-// persona "test") — both options below authenticate as that same account
-// via the same /api/auth/demo call. The second option is just a more
-// discoverable entry point to the same requireAdmin()-gated /admin access
-// that already exists via the corner shortcut in the root layout; it is
-// not a second identity and grants nothing new.
+// Two distinct real demo accounts, each with its own real Circle wallet
+// (see lib/demo/seed.ts). testAccount is a normal (non-admin) wallet with
+// seeded nanopayment/task history; adminAccount's only job is sitting on the
+// ADMIN_WALLET_ADDRESSES allowlist so requireAdmin() actually lets it into
+// /admin — same gate a real admin wallet goes through, not a UI-only shortcut.
 const DEMO_ACCOUNTS: DemoOption[] = [
   {
-    key: "test-wallet",
+    key: "test",
     persona: "test",
     email: DEMO_TEST_ACCOUNT_EMAIL,
-    label: `${DEMO_TEST_ACCOUNT_EMAIL} — existing activity`,
+    label: DEMO_TEST_ACCOUNT_EMAIL,
     destination: "/dash",
   },
   {
-    key: "test-admin",
-    persona: "test",
-    email: DEMO_TEST_ACCOUNT_EMAIL,
-    label: "testAccount (admin view)",
-    destination: "/admin",
+    key: "admin",
+    persona: "admin",
+    email: DEMO_ADMIN_ACCOUNT_EMAIL,
+    label: DEMO_ADMIN_ACCOUNT_EMAIL,
+    destination: "/admin/system",
   },
 ];
 

@@ -4,7 +4,12 @@ import { createServiceSupabase } from "@/lib/supabase/server";
 import { getUserWallet, createArcWalletForUser } from "@/lib/circle-wallets";
 import { computeContestFee } from "@/lib/disputes/service";
 import { CIRCLE_ARC_BLOCKCHAIN, ARC_CHAIN_ID } from "@/lib/arc";
-import { DEMO_TEST_ACCOUNT_EMAIL, DEMO_TEST_WALLET_REF_ID } from "@/lib/demo/config";
+import {
+  DEMO_TEST_ACCOUNT_EMAIL,
+  DEMO_TEST_WALLET_REF_ID,
+  DEMO_ADMIN_ACCOUNT_EMAIL,
+  DEMO_ADMIN_WALLET_REF_ID,
+} from "@/lib/demo/config";
 import { LIVE_CATEGORY, type CategoryKey } from "@/lib/categories";
 import type { Database } from "@/lib/supabase/types";
 
@@ -893,6 +898,20 @@ export async function ensureDemoTestAccountSeeded(): Promise<{ userId: string; w
     throw err;
   }
 
+  return { userId, walletId: wallet.id };
+}
+
+/**
+ * adminAccount@snapback.com — a real Circle wallet (reused across logins via
+ * DEMO_ADMIN_WALLET_REF_ID, same pattern as the other demo personas), but no
+ * fabricated task/dispute history: this account exists purely so its wallet
+ * address can sit on the ADMIN_WALLET_ADDRESSES allowlist and demonstrate the
+ * admin gate, not to showcase nanopayment activity.
+ */
+export async function ensureDemoAdminAccountSeeded(): Promise<{ userId: string; walletId: string }> {
+  const userId = await ensureUserId(DEMO_ADMIN_ACCOUNT_EMAIL);
+  const wallet =
+    (await getUserWallet(userId)) ?? (await createArcWalletForUser(userId, DEMO_ADMIN_WALLET_REF_ID));
   return { userId, walletId: wallet.id };
 }
 

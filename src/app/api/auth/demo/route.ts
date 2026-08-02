@@ -1,21 +1,25 @@
 import { NextResponse } from "next/server";
 import { createSession } from "@/lib/session";
 import { isDemoModeEnabled, demoPersonaEmail, type DemoPersona } from "@/lib/demo/config";
-import { ensureDemoTestAccountSeeded, ensureUserId } from "@/lib/demo/seed";
+import { ensureDemoTestAccountSeeded, ensureDemoAdminAccountSeeded, ensureUserId } from "@/lib/demo/seed";
 import { resetDemoNewAccount } from "@/lib/demo/reset";
 
 /**
  * POST /api/auth/demo
- * Body: { persona: "test" | "new" }
+ * Body: { persona: "test" | "new" | "admin" }
  *
- * Bypasses real Circle email-OTP for the two fixed demo accounts, gated
- * behind NEXT_PUBLIC_DEMO_MODE (checked here too, not just hidden in the UI
- * — a disabled flag must 404 even against a hand-crafted request).
+ * Bypasses real Circle email-OTP for the fixed demo accounts, gated behind
+ * NEXT_PUBLIC_DEMO_MODE (checked here too, not just hidden in the UI — a
+ * disabled flag must 404 even against a hand-crafted request).
  *
  * "test" seeds (once, idempotently) testAccount@snapback.com with a fixed
  * history and reuses it every time. "new" resets newAccount@snapback.com
  * back to a wallet-less state on every call, so it always re-triggers the
- * real first-time onboarding flow.
+ * real first-time onboarding flow. "admin" ensures adminAccount@snapback.com
+ * has a real wallet (no fabricated history) — whether it actually lands on
+ * /admin is decided purely by requireAdmin()'s ADMIN_WALLET_ADDRESSES check
+ * against that wallet's real address, same gate a real admin wallet goes
+ * through.
  */
 export async function POST(request: Request) {
   if (!isDemoModeEnabled()) {
@@ -28,18 +32,19 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ error: "invalid body" }, { status: 400 });
   }
-  if (persona !== "test" && persona !== "new") {
-    return NextResponse.json({ error: "persona must be 'test' or 'new'" }, { status: 400 });
+  if (persona !== "test" && persona !== "new" && persona !== "admin") {
+    return NextResponse.json({ error: "persona must be 'test', 'new', or 'admin'" }, { status: 400 });
   }
 
   try {
     const email = demoPersonaEmail(persona as DemoPersona);
-    const userId =
-      persona === "test"
-        ? (await ensureDemoTestAccountSeeded()).userId
-        : await ensureUserId(email);
-
-    if (persona === "new") {
+    let userId: string;
+    if (persona === "test") {
+      userId = (await ensureDemoTestAccountSeeded()).userId;
+    } else if (persona === "admin") {
+      userId = (await ensureDemoAdminAccountSeeded()).userId;
+    } else {
+      userId = await ensureUserId(email);
       await resetDemoNewAccount(userId);
     }
 

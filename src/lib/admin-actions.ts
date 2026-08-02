@@ -7,7 +7,6 @@ import { runResearchSourcingAgent } from "@/lib/agents/research-sourcing";
 import { isResearchSourcingListing } from "@/lib/listing-agents";
 import { triggerAutoRelease } from "@/lib/escrow";
 import { resetAndReseedDemoTestAccount } from "@/lib/demo/seed";
-import type { InsurancePoolDirection } from "@/lib/supabase/types";
 
 /**
  * Admin dashboard actions: everything here moves real state (funds, dispute
@@ -187,54 +186,6 @@ export async function resetDemoTestAccount(adminWalletId: string): Promise<{ use
     targetId: userId,
   });
   return { user_id: userId, wallet_id: walletId };
-}
-
-// ── dispute-insurance pool (logical allocation within Treasury) ─
-
-export async function getInsurancePoolBalance(): Promise<number> {
-  const supabase = createServiceSupabase();
-  const [{ data: adjustments }, { data: payouts }] = await Promise.all([
-    supabase.from("insurance_pool_adjustments").select("direction, amount_usdc"),
-    supabase.from("payments").select("amount_usdc").eq("kind", "insurance_payout"),
-  ]);
-
-  const topUps = (adjustments ?? [])
-    .filter((a) => a.direction === "top_up")
-    .reduce((s, a) => s + Number(a.amount_usdc), 0);
-  const withdrawals = (adjustments ?? [])
-    .filter((a) => a.direction === "withdraw")
-    .reduce((s, a) => s + Number(a.amount_usdc), 0);
-  const paidOut = (payouts ?? []).reduce((s, p) => s + Number(p.amount_usdc), 0);
-
-  return Number((topUps - withdrawals - paidOut).toFixed(6));
-}
-
-export async function adjustInsurancePool(
-  adminWalletId: string,
-  direction: InsurancePoolDirection,
-  amountUsdc: number,
-  reason: string,
-): Promise<{ new_balance_usdc: number }> {
-  if (!(amountUsdc > 0)) throw new Error("Amount must be positive");
-
-  const supabase = createServiceSupabase();
-  const { error } = await supabase.from("insurance_pool_adjustments").insert({
-    direction,
-    amount_usdc: amountUsdc,
-    reason,
-    admin_wallet_id: adminWalletId,
-  });
-  if (error) throw new Error(`Failed to record insurance pool adjustment: ${error.message}`);
-
-  await logAdminAction({
-    adminWalletId,
-    action: direction === "top_up" ? "insurance_pool_top_up" : "insurance_pool_withdraw",
-    targetType: "insurance_pool",
-    amountUsdc,
-    details: { reason },
-  });
-
-  return { new_balance_usdc: await getInsurancePoolBalance() };
 }
 
 export { logAdminAction };

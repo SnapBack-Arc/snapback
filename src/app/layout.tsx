@@ -36,7 +36,7 @@ export default function RootLayout({
             Navigation Timing API to tell a real reload apart from a normal
             link/redirect navigation, which the server has no way to see. */}
         <Script id="reload-guard" strategy="beforeInteractive">
-          {`(function(){try{var nav=performance.getEntriesByType('navigation')[0];if(nav&&nav.type==='reload'){fetch('/api/auth/session',{method:'DELETE',keepalive:true}).catch(function(){});if(location.pathname!=='/home'){location.replace('/home');}}}catch(e){}})();`}
+          {`(function(){try{var nav=performance.getEntriesByType('navigation')[0];if(nav&&nav.type==='reload'){fetch('/api/auth/session',{method:'DELETE',keepalive:true}).catch(function(){});if(location.pathname!=='/'){location.replace('/');}}}catch(e){}})();`}
         </Script>
         <AuroraBackground />
         <div className="relative z-10 flex min-h-full flex-1 flex-col">{children}</div>

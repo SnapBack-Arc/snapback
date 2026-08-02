@@ -60,8 +60,8 @@ const BUILT_ON = [
   },
 ];
 
-// Rendered only for anonymous visitors (see src/app/page.tsx) — a logged-in
-// session with a wallet always gets VerifyFlow instead, unchanged.
+// The root page (src/app/page.tsx) — always public, regardless of session.
+// The authenticated Demo/VerifyFlow experience lives at /demo instead.
 export default function HomeMarketing() {
   return (
     <div className="min-h-screen text-[#fafafa]">

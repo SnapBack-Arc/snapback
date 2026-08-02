@@ -5,25 +5,26 @@ import { usePathname } from "next/navigation";
 import SettingsMenu from "@/components/SettingsMenu";
 
 const LINKS = [
-  { href: "/dash", label: "Dashboard" },
-  { href: "/wallet", label: "Wallet" },
-  { href: "/demo", label: "Demo" },
+  { href: "/admin/system", label: "System" },
+  { href: "/admin/treasury", label: "Treasury" },
 ];
 
-export default function Nav({ email }: { email: string }) {
+export default function AdminNav({ email }: { email: string }) {
   const pathname = usePathname();
 
   return (
     <nav className="relative z-40 border-b border-[#ffffff14] bg-[#0c0c0eb3] backdrop-blur-[20px]">
       <div className="mx-auto flex w-full items-center justify-between px-[clamp(1rem,3vw,4rem)] py-3">
         <div className="flex items-center gap-6">
-          <span className="font-semibold text-[#fafafa]">
-            Snap<span className="text-[#10b981]">Back</span>
+          <span className="flex items-center gap-2 font-semibold text-[#fafafa]">
+            <span className="flex h-6 w-6 items-center justify-center rounded-md bg-[#10b981] text-xs font-bold text-[#052e1f]">
+              S
+            </span>
+            SnapBack
           </span>
           <div className="flex gap-1">
             {LINKS.map((link) => {
-              const active =
-                pathname === link.href || pathname.startsWith(link.href + "/");
+              const active = pathname === link.href || pathname.startsWith(link.href + "/");
               return (
                 <Link
                   key={link.href}

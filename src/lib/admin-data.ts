@@ -2,10 +2,9 @@ import "server-only";
 import type { Address } from "viem";
 import { createServiceSupabase } from "@/lib/supabase/server";
 import { getUsdcBalance } from "@/lib/viem";
-import { getGatewayBalance } from "@/lib/gateway";
-import { getInsurancePoolBalance } from "@/lib/admin-actions";
-import { estimateCallCostUsd } from "@/lib/llm-cost";
-import type { LegState } from "@/lib/disputes/settlement";
+import { getAdminSeq } from "@/lib/admin";
+import { formatUserId } from "@/lib/user-id";
+import { last7DayLabels } from "@/lib/dashboard-data";
 import type {
   PaymentRow,
   TaskRow,
@@ -20,453 +19,153 @@ import type {
  * at the call site by requireAdmin() (see lib/admin.ts), not by RLS.
  */
 
-export type RevenueLine = {
+export type TreasuryLedgerRow = {
+  id: string;
+  kind: "verification_fee" | "insurance_payout";
+  userDisplayName: string;
+  userEmail: string;
+  status: string;
+  amountUsdc: number;
+  txHash: string | null;
+  createdAt: string;
+};
+
+export type TreasuryFlowPoint = {
   label: string;
-  total_usdc: number;
-  count: number;
-  note?: string;
+  date: string;
+  cumulativeNetUsdc: number;
 };
 
 export type TreasuryOverview = {
   treasuryAddress: string | null;
   /** Real on-chain USDC balance of the Treasury wallet. */
   onChainUsdcBalance: string | null;
-  gatewayBalance: string | null;
-  /** Attributed, human-labeled revenue lines — see the docblock on getTreasuryOverview. */
-  revenueLines: RevenueLine[];
-  /** Sum of revenueLines that represent genuinely kept revenue (excludes the
-   *  informational quote_fee "collected" line, which overlaps with sweeps).
-   *  Gross inflows only — does NOT subtract real insurance-payout outflows,
-   *  see netPositionUsdc for that. */
-  totalKeptRevenueUsdc: number;
-  /** Real insurance-pool payouts (Treasury -> buyer, status=released) — an
-   *  outflow, not revenue. Shown separately so it's visible, not silently
-   *  folded into either total below. */
-  insurancePayoutsRealUsdc: number;
-  gasSpendUsdc: null;
-  gasSpendNote: string;
-  /** totalKeptRevenueUsdc minus insurancePayoutsRealUsdc — what net position
-   *  the recorded gross revenue leaves Treasury, given real payout outflows. */
+  /** Sum of nanopayment_validations.validation_fee_usdc — every real fee
+   *  charged at Verify time, kept regardless of verdict. */
+  feesCollectedUsdc: number;
+  /** Sum of nanopayment_validations.payout_usdc — real reliability-priced
+   *  insurance payouts, Treasury -> user, on a flagged-incorrect verdict. */
+  paidOutUsdc: number;
   netPositionUsdc: number;
-  insurancePoolBalanceUsdc: number;
-  /** netPositionUsdc vs on-chain balance — see docblock. */
-  onChainVsLedgerDiscrepancyUsdc: number | null;
-  discrepancyNote: string;
-  sweepFeed: PaymentRow[];
+  /** netPositionUsdc as a % of feesCollectedUsdc — null with zero fees collected. */
+  netMarginPct: number | null;
+  nanopaymentsMonitored: number;
+  avgFlagRatePct: number | null;
+  /** Cumulative net (fees - payouts) over the last 7 days, for the balance sparkline. */
+  flowHistory: TreasuryFlowPoint[];
+  /** Most recent real fee/payout transfers, newest first. */
+  ledger: TreasuryLedgerRow[];
 };
 
+const TREASURY_LEDGER_LIMIT = 25;
+
 /**
- * Revenue attribution is intentionally NOT a single "sum every payment row"
- * query — payments.kind spans genuine kept revenue, pass-through escrow
- * legs, and off-chain-only bookkeeping. Getting this wrong either hides real
- * money or double-counts it. The rules, worked out by tracing every payment
- * write site in the app:
- *
- *   - platform_fee (status=released)  -> real revenue: the happy-path skim
- *     (lib/estimator/service.ts:creditSessionToTask).
- *   - validation_fee (status=released) -> real revenue: the flat validator
- *     LLM-call recovery fee, collected in the same real Circle transfer as
- *     platform_fee at task-funding time (creditSessionToTask). Charged on
- *     every task regardless of approve/reject.
- *   - filing_fee (status=released)    -> real revenue: dispute/contest filing
- *     fees forfeited on a buyer loss (lib/disputes/service.ts:resolveDispute
- *     sets status='released' on a loss, 'refunded' on a win — only the
- *     released ones are kept). Standard disputes and post-approval contests
- *     share this one payment kind, distinguished only via disputes.dispute_kind,
- *     which is why they're reported as a single combined line, not two.
- *   - dispute_contingency (status=released) -> real revenue: the Phase 4
- *     contingency holdback, forfeited (kept) on a buyer-lost dispute — same
- *     released/refunded split as filing_fee, via the same
- *     refundOrReleaseHeldPayment/settleHeldPaymentSafely lifecycle
- *     (lib/disputes/service.ts). The refund-on-win case is untouched here —
- *     it's a real transfer back to the buyer, never revenue.
- *   - judge_fee (any status)          -> "arbitration fees": there is NO real
- *     judge-payout code path yet (no keeper draws real judges, the real
- *     on-chain judgePool has zero staked judges, JudgeRegistry.selectPanel/
- *     finalize are real but gated to the Foundry deployer key, never a live
- *     Circle wallet). judge_fee rows only exist in seeded demo history today
- *     — this line will read 0 for any real, non-demo activity, which is
- *     correct, not a bug.
- *   - treasury_sweep (status=released) -> real revenue: topic-change sweeps
- *     and abandonment sweeps, split by metadata.reason (both go through
- *     sweepSessionToTreasury in lib/estimator/service.ts).
- *   - quote_fee (status=escrowed)     -> shown as an INFORMATIONAL "collected"
- *     line, not added to totalKeptRevenueUsdc: this money is either later
- *     credited toward a task payment (not platform revenue) or swept to
- *     Treasury on abandonment/topic-change (already counted under
- *     treasury_sweep above) — counting it as revenue on top of that would
- *     double-count the swept portion.
- *   - deposit/escrow/release/refund/snapback/nanopayment/gas/submission ->
- *     pass-through legs of the task escrow lifecycle (or, for submission, a
- *     $0 tx-correlation marker), not platform revenue; excluded.
- *   - insurance_payout (status=released) -> a real OUTFLOW (Treasury ->
- *     buyer, as of this session's settlement-retry work — previously
- *     ledger-only), not revenue. Excluded from totalKeptRevenueUsdc (which
- *     stays gross/inflow-only) but subtracted separately into
- *     netPositionUsdc, and shown as its own line so it's visible rather than
- *     silently netted. Also tracked via getInsurancePoolBalance(), a
- *     different, pool-scoped figure.
- *   - marketplace_payment             -> real spend, but a different wallet
- *     (parallel_payer) on a different chain (Base mainnet, not Arc) — out of
- *     scope for this Treasury-wallet function entirely; see
- *     getParallelSpendOverview() below.
- *   - verification_fee (status=released) -> real revenue: the home page's
- *     "Verify" step (components/VerifyFlow.tsx, /api/demo/verify) — a flat
- *     fee charged on every real judge call, kept regardless of the judged
- *     CORRECT/INCORRECT outcome. Deliberately its own line, not folded into
- *     platform_fee — a genuinely different revenue stream (no escrow/task/
- *     seller behind it at all), not the escrow flow's happy-path skim.
+ * The Treasury's real role in the nanopayment system: collect the flat
+ * validation fee at every Verify call, and pay reliability-priced insurance
+ * out on a flagged-incorrect verdict. Sourced from nanopayment_validations
+ * (the source of truth for both amounts) joined to the actual payments rows
+ * for the ledger/tx-hash detail — not payments.kind alone, since
+ * insurance_payout is also (in principle) reachable from the older
+ * dispute-contest system; joining through nanopayment_validations keeps this
+ * page scoped to nanopayment money only.
  */
 export async function getTreasuryOverview(): Promise<TreasuryOverview> {
   const supabase = createServiceSupabase();
 
   const { data: treasuryWallet } = await supabase
     .from("app_wallets")
-    .select("*")
+    .select("address")
     .eq("role", "treasury")
     .maybeSingle();
 
   let onChainUsdcBalance: string | null = null;
-  let gatewayBalance: string | null = null;
   if (treasuryWallet) {
-    const address = treasuryWallet.address as Address;
-    const [usdc, gateway] = await Promise.all([
-      getUsdcBalance(address).catch(() => null),
-      getGatewayBalance(address).catch(() => null),
-    ]);
+    const usdc = await getUsdcBalance(treasuryWallet.address as Address).catch(() => null);
     onChainUsdcBalance = usdc?.formatted ?? null;
-    gatewayBalance = gateway?.formatted ?? null;
   }
 
-  const { data: payments } = await supabase
-    .from("payments")
-    .select("kind, status, amount_usdc, metadata, tx_hash, updated_at");
+  const { data: validations } = await supabase
+    .from("nanopayment_validations")
+    .select(
+      "verdict, payout_usdc, validation_fee_usdc, created_at, validation_fee_payment_id, payout_payment_id",
+    )
+    .order("created_at", { ascending: false });
 
-  type PaymentSummaryRow = {
-    kind: string;
-    status: string;
-    metadata: unknown;
-    tx_hash: string | null;
-    updated_at: string;
-  };
+  const rows = validations ?? [];
+  const feesCollectedUsdc = rows.reduce((s, r) => s + Number(r.validation_fee_usdc), 0);
+  const paidOutUsdc = rows.reduce((s, r) => s + Number(r.payout_usdc), 0);
+  const netPositionUsdc = feesCollectedUsdc - paidOutUsdc;
+  const netMarginPct = feesCollectedUsdc > 0 ? (netPositionUsdc / feesCollectedUsdc) * 100 : null;
+  const flaggedCount = rows.filter((r) => r.verdict === "incorrect").length;
+  const avgFlagRatePct = rows.length > 0 ? (flaggedCount / rows.length) * 100 : null;
 
-  const sum = (pred: (p: PaymentSummaryRow) => boolean) => {
-    const matched = (payments ?? []).filter((p) => pred(p as PaymentSummaryRow));
+  let cumulative = 0;
+  const flowHistory: TreasuryFlowPoint[] = last7DayLabels().map(({ label, date, start, end }) => {
+    const dayRows = rows.filter((r) => {
+      const t = new Date(r.created_at);
+      return t >= start && t < end;
+    });
+    const dayNet = dayRows.reduce((s, r) => s + Number(r.validation_fee_usdc) - Number(r.payout_usdc), 0);
+    cumulative += dayNet;
+    return { label, date, cumulativeNetUsdc: cumulative };
+  });
+
+  const paymentIds = rows
+    .flatMap((r) => [r.validation_fee_payment_id, r.payout_payment_id])
+    .filter((id): id is string => id !== null);
+
+  const { data: payments } = paymentIds.length
+    ? await supabase
+        .from("payments")
+        .select("id, kind, status, amount_usdc, tx_hash, created_at, from_wallet_id, to_wallet_id")
+        .in("id", paymentIds)
+        .order("created_at", { ascending: false })
+        .limit(TREASURY_LEDGER_LIMIT)
+    : { data: [] as PaymentRow[] };
+
+  const paymentRows = payments ?? [];
+  const walletIds = Array.from(
+    new Set(
+      paymentRows
+        .flatMap((p) => [p.from_wallet_id, p.to_wallet_id])
+        .filter((id): id is string => id !== null),
+    ),
+  );
+  const { data: wallets } = walletIds.length
+    ? await supabase.from("wallets").select("id, users(email, display_name)").in("id", walletIds)
+    : { data: [] as { id: string; users: { email: string; display_name: string | null } | null }[] };
+
+  const walletUserMap = new Map(
+    (wallets ?? []).map((w) => [w.id, w.users as { email: string; display_name: string | null } | null]),
+  );
+
+  const ledger: TreasuryLedgerRow[] = paymentRows.map((p) => {
+    const counterpartyWalletId = p.from_wallet_id ?? p.to_wallet_id;
+    const user = counterpartyWalletId ? walletUserMap.get(counterpartyWalletId) : null;
     return {
-      total: matched.reduce((s, p) => s + Number(p.amount_usdc), 0),
-      count: matched.length,
+      id: p.id,
+      kind: p.kind as "verification_fee" | "insurance_payout",
+      userDisplayName: user?.display_name ?? user?.email?.split("@")[0] ?? "—",
+      userEmail: user?.email ?? "",
+      status: p.status,
+      amountUsdc: Number(p.amount_usdc),
+      txHash: p.tx_hash,
+      createdAt: p.created_at,
     };
-  };
-
-  const platformFees = sum((p) => p.kind === "platform_fee" && p.status === "released");
-  const validationFees = sum((p) => p.kind === "validation_fee" && p.status === "released");
-  const disputeInsurancePremiums = sum(
-    (p) => p.kind === "dispute_insurance_premium" && p.status === "released",
-  );
-  const filingFeesForfeited = sum((p) => p.kind === "filing_fee" && p.status === "released");
-  const contingenciesForfeited = sum((p) => p.kind === "dispute_contingency" && p.status === "released");
-  const arbitrationFees = sum((p) => p.kind === "judge_fee");
-  const verificationFees = sum((p) => p.kind === "verification_fee" && p.status === "released");
-  const topicChangeSweeps = sum(
-    (p) =>
-      p.kind === "treasury_sweep" &&
-      p.status === "released" &&
-      (p.metadata as { reason?: string } | null)?.reason === "swept",
-  );
-  const abandonmentSweeps = sum(
-    (p) =>
-      p.kind === "treasury_sweep" &&
-      p.status === "released" &&
-      (p.metadata as { reason?: string } | null)?.reason === "abandoned",
-  );
-  const escalatedRetryChargesCollected = sum(
-    (p) => p.kind === "quote_fee" && p.status === "escrowed",
-  );
-  // tx_hash != null and metadata.demo !== true both matter here: this app's
-  // insurance-payout code was ledger-only (no real transfer at all, tx_hash
-  // never set) until this session's settlement-retry fix, and separately
-  // some seeded demo history is tagged metadata.demo=true. A row failing
-  // either check is not a real outflow, whatever its status says — verified
-  // live: both pre-existing insurance_payout rows in this database are
-  // excluded by this filter (one demo-seeded, one a real pre-fix bug
-  // artifact with no tx_hash), correctly reading $0 today.
-  const insurancePayoutsReal = sum(
-    (p) =>
-      p.kind === "insurance_payout" &&
-      p.status === "released" &&
-      p.tx_hash !== null &&
-      (p.metadata as { demo?: boolean } | null)?.demo !== true,
-  );
-
-  // Two failure modes of the sweep-path contingency refund's CAS-claim +
-  // retry design (see refundOrReleaseHeldPayment in lib/disputes/service.ts):
-  // 'refund_failed' is the clean terminal case (retries genuinely
-  // exhausted, durably recorded). 'refund_pending' should only ever be a
-  // brief in-flight state between the claim landing and runPaymentRefundLeg
-  // finishing — but a process killed in that window leaves it stuck there
-  // forever, since a claimed row is no longer 'escrowed' and no future
-  // sweep call will revisit it. REFUND_PENDING_STALE_MS (10 minutes) is
-  // generous relative to the retry loop's own worst case (MAX_ATTEMPTS=3,
-  // backoff up to 10s each, well under a minute total) — past that, it's
-  // not "still working," it's stuck. Keyed off `updated_at`, already kept
-  // fresh on every write by the payments_updated_at trigger; no new column.
-  const REFUND_PENDING_STALE_MS = 10 * 60_000;
-  const refundFailedSweeps = sum((p) => p.kind === "dispute_contingency" && p.status === "refund_failed");
-  const refundPendingStale = sum(
-    (p) =>
-      p.kind === "dispute_contingency" &&
-      p.status === "refund_pending" &&
-      Date.now() - new Date(p.updated_at).getTime() > REFUND_PENDING_STALE_MS,
-  );
-
-  const revenueLines: RevenueLine[] = [
-    { label: "Platform fees (happy-path skim)", total_usdc: platformFees.total, count: platformFees.count },
-    { label: "Validation fees", total_usdc: validationFees.total, count: validationFees.count },
-    {
-      label: "Dispute-insurance premiums",
-      total_usdc: disputeInsurancePremiums.total,
-      count: disputeInsurancePremiums.count,
-      note:
-        "Unconditional and non-refundable, same as the two fees above — funds the full-refund guarantee on a buyer-won standard dispute. Rate is provisional (ESTIMATOR_DISPUTE_INSURANCE_PREMIUM_PCT), sized from a thin sample (8 real disputes) — see lib/estimator/fees.ts.",
-    },
-    {
-      label: "Forfeited dispute/contest filing fees",
-      total_usdc: filingFeesForfeited.total,
-      count: filingFeesForfeited.count,
-    },
-    {
-      label: "Forfeited dispute contingencies",
-      total_usdc: contingenciesForfeited.total,
-      count: contingenciesForfeited.count,
-    },
-    {
-      label: "Arbitration fees (judge payouts)",
-      total_usdc: arbitrationFees.total,
-      count: arbitrationFees.count,
-      note:
-        arbitrationFees.count === 0
-          ? "No real judge-payout path exists yet — only ever populated by seeded demo history."
-          : undefined,
-    },
-    {
-      label: "Verification fees (Demo page)",
-      total_usdc: verificationFees.total,
-      count: verificationFees.count,
-      note: "Flat fee charged on every real Verify call (components/VerifyFlow.tsx) — kept regardless of the judged CORRECT/INCORRECT outcome.",
-    },
-    {
-      label: "Topic-change sweeps",
-      total_usdc: topicChangeSweeps.total,
-      count: topicChangeSweeps.count,
-    },
-    {
-      label: "Abandonment sweeps",
-      total_usdc: abandonmentSweeps.total,
-      count: abandonmentSweeps.count,
-    },
-    {
-      label: "Escalated retry charges (collected)",
-      total_usdc: escalatedRetryChargesCollected.total,
-      count: escalatedRetryChargesCollected.count,
-      note:
-        "Informational — not included in the total below. This money is later either credited toward a task payment or swept to Treasury (already counted in the sweep lines above); counting it separately would double-count.",
-    },
-    {
-      label: "Insurance-pool payouts (real outflow)",
-      total_usdc: insurancePayoutsReal.total,
-      count: insurancePayoutsReal.count,
-      note:
-        "Not included in the total below — this is money leaving Treasury, not revenue. Subtracted separately into netPositionUsdc. Excludes demo-seeded and pre-settlement-retry-fix rows that were never a real transfer (no tx_hash) — only genuinely confirmed real payouts count here.",
-    },
-    {
-      label: "Sweep-path refunds failed (needs attention)",
-      total_usdc: refundFailedSweeps.total,
-      count: refundFailedSweeps.count,
-      note:
-        refundFailedSweeps.count > 0
-          ? "Buyer still owed this money — sweepUncontestedContingencies' refund exhausted its retries after a genuine Circle/chain failure. Not included in the total below (still owed, not kept). Check payments.metadata.refund_state on each row for the last attempt's Circle tx id."
-          : undefined,
-    },
-    {
-      label: "Sweep-path refunds stuck pending (>10 min, needs attention)",
-      total_usdc: refundPendingStale.total,
-      count: refundPendingStale.count,
-      note:
-        refundPendingStale.count > 0
-          ? "Claimed for refund but no attempt completed — likely a process killed between the claim landing and the first retry. No automatic recovery; this row will never be revisited by a future sweep since it's no longer 'escrowed'. See the README's Known limitations. Not included in the total below."
-          : undefined,
-    },
-  ];
-
-  const totalKeptRevenueUsdc =
-    platformFees.total +
-    validationFees.total +
-    disputeInsurancePremiums.total +
-    filingFeesForfeited.total +
-    contingenciesForfeited.total +
-    arbitrationFees.total +
-    verificationFees.total +
-    topicChangeSweeps.total +
-    abandonmentSweeps.total;
-
-  const netPositionUsdc = totalKeptRevenueUsdc - insurancePayoutsReal.total;
-
-  const insurancePoolBalanceUsdc = await getInsurancePoolBalance();
-
-  const onChainVsLedgerDiscrepancyUsdc =
-    onChainUsdcBalance === null ? null : Number(onChainUsdcBalance) - netPositionUsdc;
-
-  const { data: sweepFeed } = await supabase
-    .from("payments")
-    .select("*")
-    .eq("kind", "treasury_sweep")
-    .order("created_at", { ascending: false })
-    .limit(50);
+  });
 
   return {
     treasuryAddress: treasuryWallet?.address ?? null,
     onChainUsdcBalance,
-    gatewayBalance,
-    revenueLines,
-    totalKeptRevenueUsdc,
-    insurancePayoutsRealUsdc: insurancePayoutsReal.total,
-    gasSpendUsdc: null,
-    gasSpendNote:
-      "N/A — this app's wallets self-pay gas in Arc's native USDC gas token; there is no Circle Gas Station sponsorship integration to sponsor or meter.",
+    feesCollectedUsdc,
+    paidOutUsdc,
     netPositionUsdc,
-    insurancePoolBalanceUsdc,
-    onChainVsLedgerDiscrepancyUsdc,
-    discrepancyNote:
-      "As of this session, platform fees, validation fees, dispute-insurance premiums, dispute-contingency refunds and forfeitures, filing-fee refunds and forfeitures, and insurance-pool payouts are all real Circle transfers to/from this Treasury wallet — not ledger-only bookkeeping, and every one of them (including the sweep-path contingency refund) is now retry-safe against a lost response. One thing this comparison still can't account for: gas — Arc's native gas token is USDC itself, and every real transfer Treasury initiates spends some, with no line anywhere tracking it (see Gas Station spend below). A nonzero discrepancy today is no longer expected by default the way it used to be — worth checking directly: a settlement_failed dispute with a leg stuck at 'submitted' (see 'Disputes in progress' below), or a 'Sweep-path refunds failed/stuck pending' line above with a nonzero count, both mean a real transaction may be in flight or genuinely stuck with no confirmed outcome yet.",
-    sweepFeed: (sweepFeed ?? []) as PaymentRow[],
+    netMarginPct,
+    nanopaymentsMonitored: rows.length,
+    avgFlagRatePct,
+    flowHistory,
+    ledger,
   };
-}
-
-export type ParallelSpendOverview = {
-  /** parallel_payer's address — a DIFFERENT wallet from Treasury, real Base mainnet. */
-  parallelPayerAddress: string | null;
-  /** Ledger-only — real spend to date. No live on-chain Base balance check
-   *  here by design (a new RPC dependency for a nice-to-have number); this
-   *  total is the figure that actually matters and is already fully real,
-   *  since every attempt (success or failure) writes a payments row — see
-   *  api/tasks/[id]/deliver/route.ts. */
-  totalRealSpendUsdc: number;
-  successfulPaymentsCount: number;
-  /** Failed real payment attempts — task still completed via web_search-only fallback, never blocked. */
-  failedPaymentsCount: number;
-  recentPayments: PaymentRow[];
-};
-
-/**
- * Real spend through the `parallel_payer` wallet (Base mainnet) — entirely
- * separate from Treasury (a different wallet, a different chain). Every
- * attempt writes a real payments row regardless of outcome (deliver/route.ts):
- * a success gets a real tx_hash/chain_id=8453/status=released; a failure gets
- * amount_usdc=0/status=failed so the ledger never shows the expected $0.01
- * for a charge that didn't actually happen. That makes total real spend and
- * success/failure counts fully derivable from the ledger with no live RPC
- * call needed.
- */
-export async function getParallelSpendOverview(): Promise<ParallelSpendOverview> {
-  const supabase = createServiceSupabase();
-
-  const { data: parallelWallet } = await supabase
-    .from("app_wallets")
-    .select("address")
-    .eq("role", "parallel_payer")
-    .maybeSingle();
-
-  const { data: payments } = await supabase
-    .from("payments")
-    .select("*")
-    .eq("kind", "marketplace_payment")
-    .order("created_at", { ascending: false });
-
-  const all = payments ?? [];
-  const successful = all.filter((p) => p.status === "released");
-  const failed = all.filter((p) => p.status === "failed");
-
-  return {
-    parallelPayerAddress: parallelWallet?.address ?? null,
-    totalRealSpendUsdc: successful.reduce((s, p) => s + Number(p.amount_usdc), 0),
-    successfulPaymentsCount: successful.length,
-    failedPaymentsCount: failed.length,
-    recentPayments: all.slice(0, 50) as PaymentRow[],
-  };
-}
-
-export type LlmCallCostRow = {
-  label: string;
-  callCount: number;
-  /** Null when no call in this bucket had both a real usage row and a known price for its model. */
-  avgCostUsd: number | null;
-};
-
-/**
- * Real average cost per Claude call type, computed from the token usage
- * logged on judge_votes.usage / validations.usage (see supabase/migrations/
- * 20260725043613_llm_call_usage.sql and lib/llm-cost.ts). Deliberately
- * small — three rows, not a new page — since this exists to answer "what
- * does a dispute/validation/delivery actually cost us," not to be a full
- * cost-analytics surface.
- */
-export async function getLlmCallCostOverview(): Promise<LlmCallCostRow[]> {
-  const supabase = createServiceSupabase();
-
-  const { data: votes } = await supabase
-    .from("judge_votes")
-    .select("model, usage")
-    .not("usage", "is", null);
-
-  const judgeCosts = (votes ?? [])
-    .map((v) => estimateCallCostUsd(v.model ?? "", v.usage as { input_tokens: number; output_tokens: number } | null))
-    .filter((c): c is number => c !== null);
-
-  const { data: validations } = await supabase
-    .from("validations")
-    .select("usage")
-    .not("usage", "is", null);
-
-  const validatorCosts: number[] = [];
-  const researchSourcingCosts: number[] = [];
-  for (const row of validations ?? []) {
-    const usage = row.usage as {
-      validator?: { input_tokens: number; output_tokens: number };
-      research_sourcing?: {
-        research: { input_tokens: number; output_tokens: number };
-        structure: { input_tokens: number; output_tokens: number };
-      } | null;
-    } | null;
-    if (!usage) continue;
-
-    // The validator always runs on claude-opus-4-8 — see lib/validator.ts.
-    const validatorCost = estimateCallCostUsd("claude-opus-4-8", usage.validator);
-    if (validatorCost !== null) validatorCosts.push(validatorCost);
-
-    if (usage.research_sourcing) {
-      // Both of Research & Sourcing's calls also run on claude-opus-4-8 —
-      // see lib/agents/research-sourcing.ts. Summed as one call (one
-      // delivery run), not two separate rows.
-      const researchCost = estimateCallCostUsd("claude-opus-4-8", usage.research_sourcing.research);
-      const structureCost = estimateCallCostUsd("claude-opus-4-8", usage.research_sourcing.structure);
-      if (researchCost !== null && structureCost !== null) {
-        researchSourcingCosts.push(researchCost + structureCost);
-      }
-    }
-  }
-
-  const avg = (costs: number[]): number | null =>
-    costs.length ? costs.reduce((s, c) => s + c, 0) / costs.length : null;
-
-  return [
-    { label: "Judge panel (per vote)", callCount: judgeCosts.length, avgCostUsd: avg(judgeCosts) },
-    { label: "Validator (per run)", callCount: validatorCosts.length, avgCostUsd: avg(validatorCosts) },
-    {
-      label: "Research & Sourcing (per delivery)",
-      callCount: researchSourcingCosts.length,
-      avgCostUsd: avg(researchSourcingCosts),
-    },
-  ];
 }
 
 export type AdminUserRow = {
@@ -661,49 +360,107 @@ export async function getUserDetail(walletId: string): Promise<AdminUserDetail |
   };
 }
 
-export type OpenDisputeRow = {
-  id: string;
-  task_id: string;
-  task_title: string;
-  dispute_kind: string;
-  status: string;
-  opened_by_wallet: string;
-  opened_by_email: string;
-  created_at: string;
-  /** Per-leg retry state (lib/disputes/settlement.ts) — only relevant when
-   *  status === "settlement_failed"; only keys for legs actually attempted. */
-  settlement_state: Record<string, LegState>;
+export type SystemUserRow = {
+  userId: string;
+  walletId: string | null;
+  displayName: string;
+  email: string;
+  monitored: number;
+  flaggedPct: number | null;
+  paidBackUsdc: number;
+};
+
+export type SystemOverview = {
+  totalNanopaymentsMonitored: number;
+  avgFlagRatePct: number | null;
+  totalPaidBackUsdc: number;
+  totalUsers: number;
+  verificationFeesCollectedUsdc: number;
+  netPositionUsdc: number;
+  users: SystemUserRow[];
 };
 
 /**
- * Disputes still in progress or stuck — passive visibility only, not an
- * action worklist. Every dispute now resolves automatically (the real judge
- * panel, or its deterministic tie-break — lib/disputes/judge-panel.ts); there
- * is no admin action left to take here. `settlement_failed` disputes are the
- * one exception worth an admin's attention: a genuine Circle/chain infra
- * failure after an outcome was already decided (see lib/disputes/settlement.ts).
+ * Cross-user nanopayment coverage — the admin "System dashboard". Real
+ * signup accounts only (excludes the @snapback.internal seller/judge wallets
+ * seeded for the older task-marketplace/dispute system — those never went
+ * through /login and aren't "users" of the nanopayment product).
  */
-export async function listOpenDisputesForAdmin(): Promise<OpenDisputeRow[]> {
+export async function getSystemOverview(): Promise<SystemOverview> {
   const supabase = createServiceSupabase();
-  const { data } = await supabase
-    .from("disputes")
-    .select("*, tasks(title), wallets!disputes_opened_by_wallet_fkey(address, users(email))")
-    .in("status", ["open", "voting", "settlement_failed"])
-    .order("created_at", { ascending: true });
 
-  return (data ?? []).map((d) => {
-    const task = d.tasks as { title: string } | null;
-    const openerWallet = d.wallets as { address: string; users: { email: string } | null } | null;
+  const [{ data: users }, { data: validations }] = await Promise.all([
+    supabase
+      .from("users")
+      .select("id, email, display_name, user_seq, wallets(id, address)")
+      .not("email", "like", "%@snapback.internal")
+      .order("user_seq", { ascending: true }),
+    supabase.from("nanopayment_validations").select("wallet_id, verdict, payout_usdc, validation_fee_usdc"),
+  ]);
+
+  const realUsers = users ?? [];
+  const rows = validations ?? [];
+
+  const totalNanopaymentsMonitored = rows.length;
+  const flaggedCount = rows.filter((r) => r.verdict === "incorrect").length;
+  const avgFlagRatePct = rows.length > 0 ? (flaggedCount / rows.length) * 100 : null;
+  const totalPaidBackUsdc = rows.reduce((s, r) => s + Number(r.payout_usdc), 0);
+  const verificationFeesCollectedUsdc = rows.reduce((s, r) => s + Number(r.validation_fee_usdc), 0);
+  const netPositionUsdc = verificationFeesCollectedUsdc - totalPaidBackUsdc;
+
+  const byWallet = new Map<string, { monitored: number; flagged: number; paidBack: number }>();
+  for (const r of rows) {
+    const entry = byWallet.get(r.wallet_id) ?? { monitored: 0, flagged: 0, paidBack: 0 };
+    entry.monitored += 1;
+    if (r.verdict === "incorrect") entry.flagged += 1;
+    entry.paidBack += Number(r.payout_usdc);
+    byWallet.set(r.wallet_id, entry);
+  }
+
+  const userRows: SystemUserRow[] = realUsers.map((u) => {
+    const walletRel = u.wallets as { id: string; address: string }[] | { id: string; address: string } | null;
+    const wallet = Array.isArray(walletRel) ? (walletRel[0] ?? null) : walletRel;
+    const stats = wallet ? byWallet.get(wallet.id) : undefined;
+    const adminSeq = wallet ? getAdminSeq(wallet.address) : null;
+    const userId =
+      adminSeq !== null ? formatUserId(adminSeq, true) : formatUserId(u.user_seq ?? 0, false);
     return {
-      id: d.id,
-      task_id: d.task_id,
-      task_title: task?.title ?? "",
-      dispute_kind: d.dispute_kind,
-      status: d.status,
-      opened_by_wallet: d.opened_by_wallet,
-      opened_by_email: openerWallet?.users?.email ?? "",
-      created_at: d.created_at,
-      settlement_state: (d.settlement_state as Record<string, LegState> | null) ?? {},
+      userId,
+      walletId: wallet?.id ?? null,
+      displayName: u.display_name ?? u.email.split("@")[0],
+      email: u.email,
+      monitored: stats?.monitored ?? 0,
+      flaggedPct: stats && stats.monitored > 0 ? (stats.flagged / stats.monitored) * 100 : null,
+      paidBackUsdc: stats?.paidBack ?? 0,
     };
   });
+
+  return {
+    totalNanopaymentsMonitored,
+    avgFlagRatePct,
+    totalPaidBackUsdc,
+    totalUsers: realUsers.length,
+    verificationFeesCollectedUsdc,
+    netPositionUsdc,
+    users: userRows,
+  };
+}
+
+export type WalletOwner = {
+  displayName: string;
+  email: string;
+};
+
+/** The real user behind a wallet — for the admin's per-user dashboard drill-down. */
+export async function getWalletOwner(walletId: string): Promise<WalletOwner | null> {
+  const supabase = createServiceSupabase();
+  const { data } = await supabase
+    .from("wallets")
+    .select("users(email, display_name)")
+    .eq("id", walletId)
+    .maybeSingle();
+
+  const user = data?.users as { email: string; display_name: string | null } | null;
+  if (!user) return null;
+  return { displayName: user.display_name ?? user.email.split("@")[0], email: user.email };
 }

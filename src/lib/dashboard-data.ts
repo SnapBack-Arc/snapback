@@ -116,7 +116,7 @@ export async function getDashboardData(walletId: string): Promise<DashboardData>
   };
 }
 
-function last7DayLabels(): { label: string; date: string; start: Date; end: Date }[] {
+export function last7DayLabels(): { label: string; date: string; start: Date; end: Date }[] {
   const days: { label: string; date: string; start: Date; end: Date }[] = [];
   const now = new Date();
   for (let i = 6; i >= 0; i--) {
