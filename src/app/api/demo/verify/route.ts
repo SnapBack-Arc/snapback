@@ -198,7 +198,7 @@ export async function POST(request: Request) {
       metadata: { llm_cost: llmCost },
     });
 
-    return NextResponse.json({ verdict, reasoning, payoutUsdc, nanopaymentUsdc, site });
+    return NextResponse.json({ verdict, reasoning, payoutUsdc, nanopaymentUsdc, site, llmCost });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Verification failed";
     return NextResponse.json({ error: message }, { status: 502 });

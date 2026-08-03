@@ -110,6 +110,7 @@ export async function POST(request: Request) {
         amountUsdc: parallelPayment?.amountUsdc ?? 0,
         site: NANOPAYMENT_SITE,
       },
+      llmCost,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to get an answer";
