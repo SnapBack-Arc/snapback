@@ -90,6 +90,13 @@ export async function createAndFundTask(
   // today — a future non-real listing would fall through to its static
   // price_usdc as-is.
   let priceUsdc = Number(listing.price_usdc);
+  // Persisted onto the task below (metadata.difficulty/scope_quantity) so
+  // delivery time (lib/agents/research-sourcing.ts, via
+  // /api/tasks/[id]/deliver) can cap real web_search/findings spend against
+  // the exact same numbers this price was quoted from — previously neither
+  // was stored past this function, so delivery had no way to know what was
+  // actually quoted.
+  let researchSourcingSpec: { difficulty: number; scope_quantity: number | null } | null = null;
   if (isResearchSourcingListing(listing.sla)) {
     const { data: session } = await supabase
       .from("estimator_sessions")
@@ -100,6 +107,7 @@ export async function createAndFundTask(
       throw new Error("Estimator session not found for Research & Sourcing pricing");
     }
     priceUsdc = estimateResearchSourcingCostUsdc(session.difficulty, session.scope_quantity);
+    researchSourcingSpec = { difficulty: session.difficulty, scope_quantity: session.scope_quantity };
   }
   const amountUsdc = String(priceUsdc);
 
@@ -153,6 +161,14 @@ export async function createAndFundTask(
         // the claimExpired button without a live on-chain read on every
         // load (lib/tasks/claim-expired.ts, getJobExpiredAt fallback).
         escrow_expired_at: expiredAt,
+        // Only set for Research & Sourcing tasks — see researchSourcingSpec
+        // above. Null/absent for any other listing type or for tasks created
+        // before this field existed; deliver/route.ts falls back to the same
+        // difficulty=1/scope_quantity=null floor default used elsewhere
+        // (marketplace/page.tsx's RESEARCH_SOURCING_FLOOR_USDC) when missing.
+        ...(researchSourcingSpec
+          ? { difficulty: researchSourcingSpec.difficulty, scope_quantity: researchSourcingSpec.scope_quantity }
+          : {}),
       },
     })
     .eq("id", task.id);

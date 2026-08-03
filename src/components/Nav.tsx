@@ -1,17 +1,13 @@
-"use client";
-
-import Link from "next/link";
-import { usePathname } from "next/navigation";
+import NavLinks from "@/components/NavLinks";
 import SettingsMenu from "@/components/SettingsMenu";
+import { getSession } from "@/lib/session";
+import { getMyUserId } from "@/lib/my-user-id";
 
-const LINKS = [
-  { href: "/dash", label: "Dashboard" },
-  { href: "/wallet", label: "Wallet" },
-  { href: "/demo", label: "Demo" },
-];
+export default async function Nav() {
+  const session = await getSession();
+  if (!session) return null;
 
-export default function Nav({ email }: { email: string }) {
-  const pathname = usePathname();
+  const userId = await getMyUserId(session.uid);
 
   return (
     <nav className="relative z-40 border-b border-[#ffffff14] bg-[#0c0c0eb3] backdrop-blur-[20px]">
@@ -20,27 +16,9 @@ export default function Nav({ email }: { email: string }) {
           <span className="font-semibold text-[#fafafa]">
             Snap<span className="text-[#10b981]">Back</span>
           </span>
-          <div className="flex gap-1">
-            {LINKS.map((link) => {
-              const active =
-                pathname === link.href || pathname.startsWith(link.href + "/");
-              return (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  className={`rounded-md px-3 py-1.5 text-sm transition ${
-                    active
-                      ? "bg-[#ffffff14] text-[#fafafa]"
-                      : "text-[#a1a1aa] hover:text-[#fafafa]"
-                  }`}
-                >
-                  {link.label}
-                </Link>
-              );
-            })}
-          </div>
+          <NavLinks />
         </div>
-        <SettingsMenu email={email} />
+        <SettingsMenu email={session.email} userId={userId} />
       </div>
     </nav>
   );

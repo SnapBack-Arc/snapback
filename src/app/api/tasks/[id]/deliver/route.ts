@@ -54,8 +54,19 @@ export async function POST(
   }
 
   try {
+    // Falls back to difficulty=1/scope_quantity=null (the same floor default
+    // used elsewhere — marketplace/page.tsx's RESEARCH_SOURCING_FLOOR_USDC)
+    // for any task created before lib/tasks/create.ts started persisting
+    // these — runResearchSourcingAgent uses the same default when omitted.
+    const taskMetadata = task.metadata as { difficulty?: number; scope_quantity?: number | null } | null;
+    const spec =
+      taskMetadata?.difficulty !== undefined
+        ? { difficulty: taskMetadata.difficulty, scopeQuantity: taskMetadata.scope_quantity ?? null }
+        : undefined;
+
     const { deliverable, parallelPayment, parallelPaymentError, usage } = await runResearchSourcingAgent(
       task.description ?? task.title,
+      spec,
     );
 
     // Real-money ledger entry for the Parallel marketplace payment — always

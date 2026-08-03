@@ -9,7 +9,7 @@ const LINKS = [
   { href: "/admin/treasury", label: "Treasury" },
 ];
 
-export default function AdminNav({ email }: { email: string }) {
+export default function AdminNav({ email, userId }: { email: string; userId: string }) {
   const pathname = usePathname();
 
   return (
@@ -41,7 +41,7 @@ export default function AdminNav({ email }: { email: string }) {
             })}
           </div>
         </div>
-        <SettingsMenu email={email} />
+        <SettingsMenu email={email} userId={userId} />
       </div>
     </nav>
   );

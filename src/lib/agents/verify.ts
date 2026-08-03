@@ -3,12 +3,18 @@ import Anthropic from "@anthropic-ai/sdk";
 import { requireServerEnv } from "@/lib/env";
 
 /**
- * Single real judged verdict for the home page's "Verify" step — same real
- * model and structured-output rigor as lib/disputes/judge-panel.ts's
- * callJudge, deliberately NOT that function: this flow has no dispute, no
- * escrow, no seller, and needs exactly one plain CORRECT/INCORRECT verdict,
- * not an 8-judge tiered panel that ends in resolveDispute() moving real
- * escrowed funds. Reuses the model/quality bar, not the dispute machinery.
+ * Single real judged verdict for the home page's "Verify" step. Deliberately
+ * NOT lib/disputes/judge-panel.ts's callJudge (dispute-panel + escrow
+ * machinery this flow has none of), and deliberately a plain fit-check, not
+ * an open-ended quality judgment: this only checks whether the delivered
+ * answer states the one specific fact the instruction asked for — e.g. for
+ * "who is the CEO of Anthropic", does the delivered answer say the actual
+ * CEO. It does not grade hedging, thoroughness, or writing quality.
+ *
+ * claude-sonnet-5 at high effort, not opus-4-8: a narrow fact-fit check
+ * doesn't need Opus, and running it on every nanopayment (unlike the
+ * escrow-gated marketplace judge panel) makes the per-call model choice a
+ * real per-transaction cost driver.
  */
 
 const SCHEMA = {
@@ -24,19 +30,22 @@ const SCHEMA = {
   additionalProperties: false,
 } as const;
 
-const SYSTEM = `You are an independent judge verifying whether a delivered answer correctly and accurately fulfills what was asked. You do not see who produced the answer or how — judge only the substance.
+const SYSTEM = `You check whether a delivered answer states the specific fact an instruction asked for — nothing more.
 
 Rules:
-- Judge only whether the answer actually, accurately fulfills the instruction as given — not whether it goes further than what was asked.
-- A well-hedged answer that honestly reports low confidence or partial findings is not itself a failure — judge whether what it does claim is accurate and responsive.
-- verdict must be exactly "CORRECT" or "INCORRECT" — there is no partial credit and no third option.
-- reasoning: 1-3 plain sentences naming the deciding factor.`;
+- Identify the one specific fact the instruction is asking for (a name, a number, a date, etc.).
+- Check only whether the delivered answer states that same fact correctly. Ignore writing quality, extra context, hedging, or thoroughness beyond that one fact.
+- verdict is "CORRECT" if the answer states the asked-for fact correctly, "INCORRECT" if it states the fact wrong, omits it, or states a different fact instead. There is no partial credit and no third option.
+- reasoning: 1-3 plain sentences naming the specific fact checked and why it matched or didn't.`;
 
 let client: Anthropic | null = null;
 function getClient(): Anthropic {
   if (!client) client = new Anthropic({ apiKey: requireServerEnv("ANTHROPIC_API_KEY") });
   return client;
 }
+
+/** Single source of truth for the real judge model this call uses — also read by /api/demo/verify to log real cost against the actual model, not a hardcoded duplicate string. */
+export const VERIFY_MODEL = "claude-sonnet-5" as const;
 
 export type VerifyVerdict = {
   verdict: "CORRECT" | "INCORRECT";
@@ -55,7 +64,7 @@ export function demoVerificationFeeUsdc(): number {
 
 export async function verifyAnswer(instruction: string, deliverable: unknown): Promise<VerifyVerdict> {
   const response = await getClient().messages.create({
-    model: "claude-opus-4-8",
+    model: VERIFY_MODEL,
     max_tokens: 1024,
     system: SYSTEM,
     output_config: { effort: "high", format: { type: "json_schema", schema: SCHEMA } },

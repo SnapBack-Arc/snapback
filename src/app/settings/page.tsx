@@ -15,7 +15,7 @@ export default async function SettingsPage() {
 
   return (
     <main className="min-h-screen">
-      <Nav email={session.email} />
+      <Nav />
       <div className="mx-auto w-full max-w-3xl space-y-6 px-[clamp(1rem,3vw,4rem)] py-12">
         <div>
           <h1 className="text-2xl font-bold text-[#fafafa]">Settings</h1>

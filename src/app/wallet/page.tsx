@@ -24,7 +24,7 @@ export default async function WalletPage() {
 
   return (
     <main className="min-h-screen">
-      <Nav email={session.email} />
+      <Nav />
       <WalletDashboard
         initialWallet={wallet}
         payments={payments}

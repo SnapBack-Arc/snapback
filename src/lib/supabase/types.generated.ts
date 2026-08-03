@@ -553,6 +553,7 @@ export type Database = {
           created_at: string
           id: string
           instruction: string
+          metadata: Json
           nanopayment_payment_id: string | null
           nanopayment_usdc: number
           payout_payment_id: string | null
@@ -567,6 +568,7 @@ export type Database = {
           created_at?: string
           id?: string
           instruction: string
+          metadata?: Json
           nanopayment_payment_id?: string | null
           nanopayment_usdc?: number
           payout_payment_id?: string | null
@@ -581,6 +583,7 @@ export type Database = {
           created_at?: string
           id?: string
           instruction?: string
+          metadata?: Json
           nanopayment_payment_id?: string | null
           nanopayment_usdc?: number
           payout_payment_id?: string | null

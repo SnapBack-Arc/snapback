@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { getUserWallet } from "@/lib/circle-wallets";
-import { runResearchSourcingAgent } from "@/lib/agents/research-sourcing";
+import { runDemoAnswerAgent } from "@/lib/agents/demo-answer";
 import { createServiceSupabase } from "@/lib/supabase/server";
 import { BASE_CHAIN_ID } from "@/lib/base";
 import { NANOPAYMENT_SITE } from "@/lib/nanopayment-insurance";
+import { estimateCallCostUsd } from "@/lib/llm-cost";
 
 /**
  * POST /api/demo/answer
@@ -12,16 +13,20 @@ import { NANOPAYMENT_SITE } from "@/lib/nanopayment-insurance";
  *
  * Home page's "Get Answer" step — this is the real agent-to-agent
  * nanopayment SnapBack exists to insure: a genuine, non-simulated x402
- * payment to Parallel (lib/agents/parallel-client.ts) alongside Claude's own
- * web_search, same real spend runResearchSourcingAgent makes for a funded
- * task (see /api/tasks/[id]/deliver). No task/escrow/seller here — this
- * nanopayment is standalone, tracked by wallet directly (task_id stays
- * null, same as any task-less marketplace_payment row), and its amount +
- * payment id are handed back to the client so the "Verify" step can insure
+ * payment to Parallel (lib/agents/parallel-client.ts). Unlike the funded-task
+ * delivery path (runResearchSourcingAgent, see /api/tasks/[id]/deliver),
+ * this step's only job is to produce something for "Verify" to judge, not to
+ * do independent research itself — so it spends one cheap claude-haiku-4-5
+ * call (lib/agents/demo-answer.ts) lightly reformatting Parallel's real
+ * result, no web_search, no research/structure split. No task/escrow/seller
+ * here — this nanopayment is standalone, tracked by wallet directly (task_id
+ * stays null, same as any task-less marketplace_payment row), and its amount
+ * + payment id are handed back to the client so the "Verify" step can insure
  * this exact charge if the answer turns out wrong. If the real Parallel
- * payment fails, the answer still comes back (Claude's web_search alone),
- * just with nothing to insure — recorded as $0, never the expected charge
- * for a payment that didn't happen.
+ * payment fails, the answer still comes back (the formatting call says so
+ * plainly instead of fabricating one), just with nothing to insure —
+ * recorded as $0, never the expected charge for a payment that didn't
+ * happen.
  */
 export async function POST(request: Request) {
   const session = await getSession();
@@ -45,7 +50,18 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { deliverable, parallelPayment, parallelPaymentError } = await runResearchSourcingAgent(instruction);
+    const { deliverable, parallelPayment, parallelPaymentError, usage } = await runDemoAnswerAgent(instruction);
+
+    // Real cost of the one Haiku formatting call this step makes — logged
+    // regardless of whether Parallel's payment succeeded, since that call
+    // runs either way (lib/agents/demo-answer.ts). null only if the rate
+    // table (lib/llm-cost.ts) ever falls behind a model change again.
+    const llmCost = {
+      model: usage.model,
+      input_tokens: usage.input_tokens,
+      output_tokens: usage.output_tokens,
+      real_cost_usdc: estimateCallCostUsd(usage.model, usage),
+    };
 
     const supabase = createServiceSupabase();
     const { data: paymentRow } = await supabase
@@ -65,6 +81,7 @@ export async function POST(request: Request) {
                 payee_address: parallelPayment.payeeAddress,
                 network: "eip155:8453",
                 demo: true,
+                llm_cost: llmCost,
               },
             }
           : {
@@ -76,9 +93,10 @@ export async function POST(request: Request) {
               metadata: {
                 service: "parallel",
                 site: NANOPAYMENT_SITE,
-                reason: "payment_failed_fell_back_to_web_search",
+                reason: "payment_failed_no_live_search_data",
                 error: parallelPaymentError,
                 demo: true,
+                llm_cost: llmCost,
               },
             },
       )

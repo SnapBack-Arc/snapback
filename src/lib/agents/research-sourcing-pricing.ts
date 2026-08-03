@@ -43,9 +43,14 @@ const COST_BUFFER_MULTIPLIER = 1.5;
  * both difficulty (1-5, already used for Estimator gating) and how many
  * items the request asks for (scope_quantity, e.g. "5 suppliers" -> 5).
  * Capped at 10 — beyond that, more searches stop meaningfully improving a
- * single research pass and this is a cost model, not a scheduler.
+ * single research pass.
+ *
+ * Exported because research-sourcing.ts now also uses this same number as
+ * the real web_search max_uses cap at delivery time, not just to price the
+ * task — what gets enforced is exactly what was quoted, not a second,
+ * disconnected estimate.
  */
-function estimateSearchCount(difficulty: number, scopeQuantity: number | null): number {
+export function estimateSearchCount(difficulty: number, scopeQuantity: number | null): number {
   const d = Math.min(5, Math.max(1, Math.round(difficulty)));
   const scopeSearches = scopeQuantity ? Math.ceil(scopeQuantity / 5) : 0;
   return Math.min(10, d + scopeSearches);

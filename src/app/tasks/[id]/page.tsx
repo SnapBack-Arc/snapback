@@ -604,7 +604,7 @@ export default async function TaskDetailPage({
 
   return (
     <main className="min-h-screen">
-      <Nav email={session.email} />
+      <Nav />
       <TaskLiveUpdates active={stage !== "settled" && stage !== "refunded"} />
       <div className="mx-auto max-w-3xl space-y-6 p-6">
         <div>

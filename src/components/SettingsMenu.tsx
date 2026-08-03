@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
-export default function SettingsMenu({ email }: { email: string }) {
+export default function SettingsMenu({ email, userId }: { email: string; userId: string }) {
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const [spins, setSpins] = useState(0);
@@ -62,7 +62,10 @@ export default function SettingsMenu({ email }: { email: string }) {
         }`}
         aria-hidden={!menuOpen}
       >
-        <div className="truncate px-2.5 py-2 text-xs text-[#71717a]">{email}</div>
+        <div className="px-2.5 py-2">
+          <div className="truncate text-xs text-[#71717a]">{email}</div>
+          <div className="mt-0.5 font-mono text-[11px] text-[#52525b]">ID {userId}</div>
+        </div>
         <div className="mt-1 space-y-0.5">
           <Link
             href="/profile"

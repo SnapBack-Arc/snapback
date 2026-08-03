@@ -2,6 +2,7 @@ import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireServerEnv } from "@/lib/env";
 import { payParallelSearch, ParallelPaymentError } from "@/lib/agents/parallel-client";
+import { estimateSearchCount } from "@/lib/agents/research-sourcing-pricing";
 
 /**
  * SnapBack's one real integration (see README.md "Research & Sourcing — the
@@ -106,6 +107,7 @@ type TokenUsage = { input_tokens: number; output_tokens: number };
 async function research(
   taskDescription: string,
   parallelFinding: string | null,
+  searchCap: number,
 ): Promise<{
   reportText: string;
   sources: { title: string; url: string }[];
@@ -126,7 +128,7 @@ async function research(
     max_tokens: 4096,
     system:
       "You are a research & sourcing agent fulfilling a paid task. Use web search to actually investigate the request below, then write a plain-language research report covering what you found, from which sources, and how confident you are in each finding. Only report sources you actually found via search — never fabricate a source, a URL, or a finding you didn't verify.",
-    tools: [{ type: "web_search_20250305", name: "web_search" }],
+    tools: [{ type: "web_search_20250305", name: "web_search", max_uses: searchCap }],
     messages: [{ role: "user", content: userContent }],
   });
 
@@ -173,13 +175,15 @@ async function structure(
   taskDescription: string,
   reportText: string,
   sources: { title: string; url: string }[],
+  findingsCap: number,
 ): Promise<{ deliverable: ResearchDeliverable; usage: TokenUsage }> {
   const response = await getClient().messages.create({
     model: "claude-opus-4-8",
     max_tokens: 4096,
     system:
       "Structure the research report into the deliverable schema. Only cite sources from the REAL SOURCES list provided — never invent a title or URL not in that list. " +
-      "For each finding, also assess source_role and overlaps_with by comparing it against every OTHER finding in this same deliverable: mark overlaps_with only when the source material actually discloses that two findings trace back to the same underlying brand/manufacturer (e.g. one page states it distributes or resells the other's brand) — never infer an undisclosed relationship. If a finding's role or relationship to the others isn't clear from what the sources actually say, use 'uncertain' / null rather than guessing.",
+      "For each finding, also assess source_role and overlaps_with by comparing it against every OTHER finding in this same deliverable: mark overlaps_with only when the source material actually discloses that two findings trace back to the same underlying brand/manufacturer (e.g. one page states it distributes or resells the other's brand) — never infer an undisclosed relationship. If a finding's role or relationship to the others isn't clear from what the sources actually say, use 'uncertain' / null rather than guessing. " +
+      `Return at most ${findingsCap} findings — if the research surfaced more distinct sources than that, keep only the most relevant/highest-confidence ones.`,
     output_config: { effort: "low", format: { type: "json_schema", schema: STRUCTURE_SCHEMA } },
     messages: [
       {
@@ -228,9 +232,28 @@ export type ResearchSourcingResult = {
   usage: { research: TokenUsage; structure: TokenUsage };
 };
 
+export type ResearchSourcingSpec = {
+  /** Difficulty (1-5) this task was actually quoted/priced against — see research-sourcing-pricing.ts. */
+  difficulty: number;
+  scopeQuantity: number | null;
+};
+
 export async function runResearchSourcingAgent(
   taskDescription: string,
+  /**
+   * Defaults to the same difficulty=1/scope_quantity=null floor used
+   * elsewhere (marketplace/page.tsx's RESEARCH_SOURCING_FLOOR_USDC) for any
+   * caller that doesn't have a real spec — the demo path (no estimator
+   * session at all) and any task created before this field was persisted
+   * (lib/tasks/create.ts).
+   */
+  spec: ResearchSourcingSpec = { difficulty: 1, scopeQuantity: null },
 ): Promise<ResearchSourcingResult> {
+  // A real cap, not just a pricing input: the same number that priced this
+  // task now bounds what it's actually allowed to spend at delivery time —
+  // see estimateSearchCount's docblock.
+  const searchCap = estimateSearchCount(spec.difficulty, spec.scopeQuantity);
+
   let parallelPayment: ParallelPaymentRecord | null = null;
   let parallelPaymentError: string | null = null;
   let parallelFinding: string | null = null;
@@ -252,8 +275,8 @@ export async function runResearchSourcingAgent(
     console.error(`[research-sourcing] Parallel payment failed, falling back to web_search only: ${parallelPaymentError}`);
   }
 
-  const { reportText, sources, usage: researchUsage } = await research(taskDescription, parallelFinding);
-  const { deliverable, usage: structureUsage } = await structure(taskDescription, reportText, sources);
+  const { reportText, sources, usage: researchUsage } = await research(taskDescription, parallelFinding, searchCap);
+  const { deliverable, usage: structureUsage } = await structure(taskDescription, reportText, sources, searchCap);
   return {
     deliverable,
     parallelPayment,

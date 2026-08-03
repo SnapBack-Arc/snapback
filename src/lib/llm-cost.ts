@@ -17,6 +17,7 @@
 const RATES_USD_PER_MTOK: Record<string, { input: number; output: number }> = {
   "claude-opus-4-8": { input: 5, output: 25 },
   "claude-sonnet-5": { input: 3, output: 15 },
+  "claude-haiku-4-5": { input: 1, output: 5 },
 };
 
 /** Real USD cost for one call, or null if the model has no known rate (logs a call type this table hasn't been updated for, rather than silently mis-pricing it). */

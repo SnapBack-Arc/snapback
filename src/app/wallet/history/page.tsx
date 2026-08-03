@@ -17,7 +17,7 @@ export default async function WalletHistoryPage() {
 
   return (
     <main className="min-h-screen">
-      <Nav email={session.email} />
+      <Nav />
       <div className="mx-auto w-full space-y-6 px-[clamp(1rem,3vw,4rem)] py-12">
         <div>
           <Link href="/wallet" className="text-sm text-[#a1a1aa] hover:text-[#fafafa]">

@@ -15,7 +15,7 @@ export default async function PaymentsPage() {
 
   return (
     <main className="min-h-screen">
-      <Nav email={session.email} />
+      <Nav />
       <div className="mx-auto max-w-4xl space-y-6 p-6">
         <h1 className="text-2xl font-bold text-white">Payment history</h1>
 

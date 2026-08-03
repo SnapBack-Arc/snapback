@@ -4,7 +4,6 @@ import { createServiceSupabase } from "@/lib/supabase/server";
 export type ProfileData = {
   displayName: string | null;
   memberSince: string;
-  userSeq: number;
   tasksAsBuyer: number;
   tasksAsSeller: number;
   validationsRun: number;
@@ -17,7 +16,7 @@ export async function getProfileData(userId: string, walletId: string | null): P
 
   const [{ data: user }, { count: tasksAsBuyer }, { count: tasksAsSeller }, { data: validations }] =
     await Promise.all([
-      supabase.from("users").select("display_name, created_at, user_seq").eq("id", userId).maybeSingle(),
+      supabase.from("users").select("display_name, created_at").eq("id", userId).maybeSingle(),
       walletId
         ? supabase.from("tasks").select("id", { count: "exact", head: true }).eq("payer_wallet_id", walletId)
         : Promise.resolve({ count: 0 }),
@@ -34,7 +33,6 @@ export async function getProfileData(userId: string, walletId: string | null): P
   return {
     displayName: user?.display_name ?? null,
     memberSince: user?.created_at ?? new Date().toISOString(),
-    userSeq: user?.user_seq ?? 0,
     tasksAsBuyer: tasksAsBuyer ?? 0,
     tasksAsSeller: tasksAsSeller ?? 0,
     validationsRun: validationRows.length,

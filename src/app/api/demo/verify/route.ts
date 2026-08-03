@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import type { Address } from "viem";
 import { getSession } from "@/lib/session";
 import { getUserWallet } from "@/lib/circle-wallets";
-import { verifyAnswer, demoVerificationFeeUsdc } from "@/lib/agents/verify";
+import { verifyAnswer, demoVerificationFeeUsdc, VERIFY_MODEL } from "@/lib/agents/verify";
+import { estimateCallCostUsd } from "@/lib/llm-cost";
 import { createServiceSupabase } from "@/lib/supabase/server";
 import { ARC_CHAIN_ID } from "@/lib/arc";
 import { transferUsdc, waitForTxHash } from "@/lib/escrow";
@@ -118,7 +119,15 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { verdict, reasoning } = await verifyAnswer(instruction, deliverable);
+    const { verdict, reasoning, usage } = await verifyAnswer(instruction, deliverable);
+
+    // Real cost of the one judge call this step makes, regardless of verdict.
+    const llmCost = {
+      model: VERIFY_MODEL,
+      input_tokens: usage.input_tokens,
+      output_tokens: usage.output_tokens,
+      real_cost_usdc: estimateCallCostUsd(VERIFY_MODEL, usage),
+    };
 
     const site = nanopayment?.site ?? NANOPAYMENT_SITE;
     const nanopaymentUsdc = nanopayment?.amountUsdc ?? 0;
@@ -186,6 +195,7 @@ export async function POST(request: Request) {
       nanopayment_payment_id: nanopayment?.paymentId ?? null,
       validation_fee_payment_id: validationFeePaymentId,
       payout_payment_id: payoutPaymentId,
+      metadata: { llm_cost: llmCost },
     });
 
     return NextResponse.json({ verdict, reasoning, payoutUsdc, nanopaymentUsdc, site });

@@ -28,7 +28,7 @@ export default async function DashboardPage() {
 
   return (
     <main className="min-h-screen">
-      <Nav email={session.email} />
+      <Nav />
       <DashboardView data={data} hasWallet={!!wallet} />
     </main>
   );

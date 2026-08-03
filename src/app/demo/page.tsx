@@ -16,7 +16,7 @@ export default async function DemoPage() {
 
   return (
     <main className="min-h-screen">
-      <Nav email={session.email} />
+      <Nav />
       <VerifyFlow />
     </main>
   );
