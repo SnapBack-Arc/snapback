@@ -13,51 +13,53 @@ export default async function AdminHistoryPage() {
   const buyers = await listBuyersWithTaskHistory();
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6 p-6">
+    <div className="mx-auto w-full space-y-6 px-[clamp(1rem,3vw,4rem)] py-12">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Task history &amp; money trail</h1>
-          <p className="mt-1 text-sm text-zinc-400">
+          <h1 className="text-2xl font-bold text-[#fafafa]">Task history &amp; money trail</h1>
+          <p className="mt-1 text-sm text-[#a1a1aa]">
             Read-only record of every real buyer&apos;s tasks — what was asked, what was delivered,
             how it was judged, and every real fund movement. Nothing on this page takes an action.
           </p>
         </div>
-        <Link href="/admin/users" className="text-sm text-emerald-400 hover:underline">
+        <Link href="/admin/users" className="text-sm text-[#10b981] hover:underline">
           Users (operations) →
         </Link>
       </div>
 
       {buyers.length === 0 ? (
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-8 text-center text-sm text-zinc-400">
+        <div className="glass-card p-8 text-center text-sm text-[#a1a1aa]">
           No buyers with tasks yet.
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-zinc-800">
-          <table className="w-full text-sm">
-            <thead className="bg-zinc-900 text-left text-xs uppercase tracking-wide text-zinc-500">
-              <tr>
-                <th className="px-4 py-3">Buyer</th>
-                <th className="px-4 py-3">Email</th>
-                <th className="px-4 py-3">Tasks</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-800 bg-zinc-950">
-              {buyers.map((b) => (
-                <tr key={b.wallet_id} className="text-zinc-300 hover:bg-zinc-900">
-                  <td className="px-4 py-3">
-                    <Link
-                      href={`/admin/history/${b.wallet_id}`}
-                      className="font-mono text-emerald-400 hover:underline"
-                    >
-                      {shortAddress(b.address)}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3 text-zinc-400">{b.email || "—"}</td>
-                  <td className="px-4 py-3">{b.task_count}</td>
+        <div className="glass-card overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-left text-xs uppercase tracking-wide text-[#71717a]">
+                <tr>
+                  <th className="px-4 py-3">Buyer</th>
+                  <th className="px-4 py-3">Email</th>
+                  <th className="px-4 py-3">Tasks</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-[#ffffff14]">
+                {buyers.map((b) => (
+                  <tr key={b.wallet_id} className="text-[#fafafa] hover:bg-[#ffffff0a]">
+                    <td className="px-4 py-3">
+                      <Link
+                        href={`/admin/history/${b.wallet_id}`}
+                        className="font-mono text-[#10b981] hover:underline"
+                      >
+                        {shortAddress(b.address)}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-3 text-[#a1a1aa]">{b.email || "—"}</td>
+                    <td className="px-4 py-3">{b.task_count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

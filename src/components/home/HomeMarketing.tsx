@@ -52,7 +52,7 @@ const BUILT_ON = [
   },
   {
     title: "Circle Gateway",
-    body: "A user deposits USDC once, and every nanopayment after that settles gaslessly — signed off-chain, batched on-chain, no per-transaction gas.",
+    body: "Every validation fee settles through Circle Gateway's batched, gasless x402 flow — signed by SnapBack's own wallet on your behalf, so you never touch gas or sign anything yourself.",
   },
   {
     title: "Nanopayments",

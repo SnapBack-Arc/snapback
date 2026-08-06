@@ -13,7 +13,7 @@ export default function FlagUserForm({ walletId }: { walletId: string }) {
         value={reason}
         onChange={(e) => setReason(e.target.value)}
         placeholder="Reason for pausing"
-        className="w-48 rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-emerald-500"
+        className="w-48 rounded border border-[#3f3f46] bg-[#18181b] px-2 py-1.5 text-xs text-[#fafafa] outline-none focus:border-[#10b981]"
       />
       {valid ? (
         <ConfirmAction
@@ -27,7 +27,7 @@ export default function FlagUserForm({ walletId }: { walletId: string }) {
         <button
           type="button"
           disabled
-          className="cursor-not-allowed rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-600"
+          className="cursor-not-allowed rounded-lg border border-[#ffffff14] bg-[#18181b] px-3 py-1.5 text-xs font-medium text-[#52525b]"
         >
           Pause user
         </button>

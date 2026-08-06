@@ -35,16 +35,16 @@ export default async function AdminHistoryBuyerPage({
   ).filter((t): t is TaskDetail => t !== null);
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6 p-6">
+    <div className="mx-auto w-full space-y-6 px-[clamp(1rem,3vw,4rem)] py-12">
       <div>
-        <Link href="/admin/history" className="text-sm text-zinc-500 hover:text-zinc-300">
+        <Link href="/admin/history" className="text-sm text-[#71717a] hover:text-[#fafafa]">
           ← All buyers
         </Link>
         <div className="mt-2 flex items-center gap-2">
-          <h1 className="font-mono text-xl font-bold text-white">{shortAddress(wallet.address)}</h1>
-          {user?.email && <span className="text-sm text-zinc-500">{user.email}</span>}
+          <h1 className="font-mono text-xl font-bold text-[#fafafa]">{shortAddress(wallet.address)}</h1>
+          {user?.email && <span className="text-sm text-[#71717a]">{user.email}</span>}
         </div>
-        <p className="mt-1 text-sm text-zinc-400">{tasks.length} task(s)</p>
+        <p className="mt-1 text-sm text-[#a1a1aa]">{tasks.length} task(s)</p>
       </div>
 
       <TaskHistoryAccordion tasks={tasks} />

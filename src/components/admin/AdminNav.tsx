@@ -7,6 +7,8 @@ import SettingsMenu from "@/components/SettingsMenu";
 const LINKS = [
   { href: "/admin/system", label: "System" },
   { href: "/admin/treasury", label: "Treasury" },
+  { href: "/admin/users", label: "Users" },
+  { href: "/admin/history", label: "History" },
 ];
 
 export default function AdminNav({ email, userId }: { email: string; userId: string }) {

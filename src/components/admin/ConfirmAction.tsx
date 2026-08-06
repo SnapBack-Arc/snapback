@@ -56,7 +56,7 @@ export default function ConfirmAction({
   const buttonClass =
     variant === "danger"
       ? "border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20"
-      : "border-zinc-700 bg-zinc-800 text-zinc-200 hover:bg-zinc-700";
+      : "border-[#3f3f46] bg-[#18181b] text-[#a1a1aa] hover:bg-[#ffffff0a] hover:text-[#fafafa]";
 
   if (!expanded) {
     return (
@@ -71,9 +71,9 @@ export default function ConfirmAction({
   }
 
   return (
-    <div className="inline-flex flex-col gap-1.5 rounded-lg border border-zinc-700 bg-zinc-950 p-2.5">
-      <p className="text-xs text-zinc-400">
-        Type <span className="font-mono text-zinc-200">CONFIRM</span> to {confirmLabel ?? label.toLowerCase()}.
+    <div className="inline-flex flex-col gap-1.5 rounded-lg border border-[#3f3f46] bg-[#09090b] p-2.5">
+      <p className="text-xs text-[#a1a1aa]">
+        Type <span className="font-mono text-[#fafafa]">CONFIRM</span> to {confirmLabel ?? label.toLowerCase()}.
       </p>
       <div className="flex items-center gap-2">
         <input
@@ -81,7 +81,7 @@ export default function ConfirmAction({
           onChange={(e) => setConfirmText(e.target.value)}
           placeholder="CONFIRM"
           disabled={submitting}
-          className="w-28 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-emerald-500 disabled:opacity-60"
+          className="w-28 rounded border border-[#3f3f46] bg-[#18181b] px-2 py-1 text-xs text-[#fafafa] outline-none focus:border-[#10b981] disabled:opacity-60"
         />
         <button
           type="button"
@@ -90,7 +90,7 @@ export default function ConfirmAction({
           className={`rounded px-2.5 py-1 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
             variant === "danger"
               ? "bg-red-500 text-zinc-950 hover:bg-red-400"
-              : "bg-emerald-500 text-zinc-950 hover:bg-emerald-400"
+              : "bg-[#10b981] text-[#052e1f] hover:bg-[#34d399]"
           }`}
         >
           {submitting ? "Working…" : "Go"}
@@ -103,7 +103,7 @@ export default function ConfirmAction({
             setConfirmText("");
           }}
           disabled={submitting}
-          className="text-xs text-zinc-500 hover:text-zinc-300"
+          className="text-xs text-[#71717a] hover:text-[#a1a1aa]"
         >
           Cancel
         </button>

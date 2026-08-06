@@ -2,12 +2,19 @@ import { NextResponse } from "next/server";
 import { resolveCircleUserId } from "@/lib/circle-user";
 import { createServiceSupabase } from "@/lib/supabase/server";
 import { createSession, clearSession } from "@/lib/session";
+import { getUserControlledWalletsClient } from "@/lib/circle";
+import { getUserWallet } from "@/lib/circle-wallets";
+import { CIRCLE_ARC_BLOCKCHAIN } from "@/lib/arc";
 
 /**
  * POST /api/auth/session
  * Body: { email, userToken }
  * Validates the web-SDK userToken with Circle, upserts the Supabase user, and
- * sets a signed session cookie.
+ * sets a signed session cookie. If the user has no wallet yet, also starts
+ * Circle's PIN-setup challenge (createUserPinWithWallets) and returns its
+ * challengeId so the client can complete it in Circle's hosted UI — the
+ * wallet itself isn't persisted until that challenge completes (see
+ * /api/auth/wallet-complete).
  */
 export async function POST(request: Request) {
   try {
@@ -41,7 +48,30 @@ export async function POST(request: Request) {
     }
 
     await createSession(data.id, data.email);
-    return NextResponse.json({ user: { id: data.id, email: data.email } });
+
+    const existingWallet = await getUserWallet(data.id);
+    if (existingWallet) {
+      return NextResponse.json({ user: { id: data.id, email: data.email } });
+    }
+
+    // First-time login with no wallet yet: start real PIN-setup wallet
+    // creation. createUserPinWithWallets is the correct endpoint for
+    // initial signup (createWallet requires an existing PIN).
+    const client = getUserControlledWalletsClient();
+    const pin = await client.createUserPinWithWallets({
+      userToken,
+      blockchains: [CIRCLE_ARC_BLOCKCHAIN],
+      accountType: "SCA",
+    });
+    const challengeId = pin.data?.challengeId;
+    if (!challengeId) {
+      throw new Error("Circle did not return a PIN-setup challenge");
+    }
+
+    return NextResponse.json({
+      user: { id: data.id, email: data.email },
+      challengeId,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Session failed";
     return NextResponse.json({ error: message }, { status: 500 });

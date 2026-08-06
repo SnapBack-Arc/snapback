@@ -64,6 +64,9 @@ export default function LoginForm() {
   const [demoSelection, setDemoSelection] = useState<string>("");
   const [demoOption, setDemoOption] = useState<DemoOption | null>(null);
   const [demoPhase, setDemoPhase] = useState<DemoPhase>("idle");
+  // Demo mode's third "option": switches away from the demo dropdown to the
+  // real email-OTP + PIN-setup flow below, still under DEMO_MODE.
+  const [showEmailSignup, setShowEmailSignup] = useState(false);
 
   const busy = phase === "sending" || phase === "finishing";
 
@@ -135,17 +138,55 @@ export default function LoginForm() {
           return;
         }
         setPhase("finishing");
+        const userToken = result.userToken;
         const res = await fetch("/api/auth/session", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: cleanEmail, userToken: result.userToken }),
+          body: JSON.stringify({ email: cleanEmail, userToken }),
         });
+        const body = await res.json().catch(() => ({}));
         if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
           setError(body.error ?? "Could not create session");
           setPhase("idle");
           return;
         }
+
+        // New user, no wallet yet: Circle returned a PIN-setup challenge.
+        // Complete it in the hosted UI, then persist the resulting wallet.
+        if (body.challengeId) {
+          const sdkInstance = sdkRef.current as {
+            execute: (
+              challengeId: string,
+              onCompleted?: (
+                execErr: { message?: string } | undefined,
+                execResult: { status?: string } | undefined,
+              ) => void,
+            ) => void;
+          } | null;
+
+          sdkInstance?.execute(body.challengeId, async (execErr, execResult) => {
+            if (execErr || execResult?.status !== "COMPLETE") {
+              setError(execErr?.message ?? "PIN setup was not completed");
+              setPhase("idle");
+              return;
+            }
+            const walletRes = await fetch("/api/auth/wallet-complete", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ userToken }),
+            });
+            if (!walletRes.ok) {
+              const walletBody = await walletRes.json().catch(() => ({}));
+              setError(walletBody.error ?? "Could not finish wallet setup");
+              setPhase("idle");
+              return;
+            }
+            router.push("/dash");
+            router.refresh();
+          });
+          return;
+        }
+
         router.push("/dash");
         router.refresh();
       };
@@ -216,13 +257,20 @@ export default function LoginForm() {
             >
               {DEMO_MODE ? "Select account" : "Email"}
             </label>
-            {DEMO_MODE ? (
+            {DEMO_MODE && !showEmailSignup ? (
               <select
                 id="email"
                 required
                 value={demoSelection}
                 onChange={(e) => {
-                  if (e.target.value) selectDemoAccount(e.target.value);
+                  const value = e.target.value;
+                  if (!value) return;
+                  if (value === "signup") {
+                    setDemoSelection("");
+                    setShowEmailSignup(true);
+                    return;
+                  }
+                  selectDemoAccount(value);
                 }}
                 disabled={demoPhase !== "idle"}
                 className="w-full rounded-xl border border-[#3f3f46] bg-[#18181b] px-3 py-2.5 text-sm text-[#fafafa] outline-none transition focus:border-[#10b981] disabled:opacity-60 font-[family-name:var(--font-app-mono)]"
@@ -235,6 +283,7 @@ export default function LoginForm() {
                     {account.label}
                   </option>
                 ))}
+                <option value="signup">Sign up with email</option>
               </select>
             ) : (
               <input
@@ -250,7 +299,7 @@ export default function LoginForm() {
             )}
           </div>
 
-          {DEMO_MODE ? (
+          {DEMO_MODE && !showEmailSignup ? (
             <p className="text-xs text-[#71717a]">
               Demo mode: selecting an account walks through the same sign-in flow with a
               pre-filled verification code — no real email required.
@@ -276,6 +325,33 @@ export default function LoginForm() {
                   A one-time code was emailed to you. Enter it in the Circle popup to
                   finish signing in.
                 </p>
+              )}
+
+              {(phase === "awaiting_otp" || phase === "finishing") && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPhase("idle");
+                    setError(null);
+                  }}
+                  className="text-xs text-[#71717a] hover:text-[#a1a1aa]"
+                >
+                  Cancel and try again
+                </button>
+              )}
+
+              {DEMO_MODE && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowEmailSignup(false);
+                    setError(null);
+                    setPhase("idle");
+                  }}
+                  className="text-xs text-[#71717a] hover:text-[#a1a1aa]"
+                >
+                  ← Use a demo account instead
+                </button>
               )}
             </>
           )}

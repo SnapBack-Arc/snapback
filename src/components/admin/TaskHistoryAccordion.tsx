@@ -23,7 +23,7 @@ export default function TaskHistoryAccordion({ tasks }: { tasks: TaskDetail[] })
   const [openId, setOpenId] = useState<string | null>(null);
 
   if (tasks.length === 0) {
-    return <p className="text-sm text-zinc-500">No tasks yet.</p>;
+    return <p className="text-sm text-[#71717a]">No tasks yet.</p>;
   }
 
   return (
@@ -32,22 +32,22 @@ export default function TaskHistoryAccordion({ tasks }: { tasks: TaskDetail[] })
         const outcome = deriveOutcomeLabel(task);
         const isOpen = openId === task.id;
         return (
-          <div key={task.id} className="rounded-xl border border-zinc-800 bg-zinc-900">
+          <div key={task.id} className="glass-card">
             <button
               type="button"
               onClick={() => setOpenId(isOpen ? null : task.id)}
               className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
             >
               <div className="min-w-0">
-                <div className="truncate font-medium text-white">{task.title}</div>
-                <div className="text-xs text-zinc-500">{formatDate(task.created_at)}</div>
+                <div className="truncate font-medium text-[#fafafa]">{task.title}</div>
+                <div className="text-xs text-[#71717a]">{formatDate(task.created_at)}</div>
               </div>
               <div className="flex shrink-0 items-center gap-3">
-                <span className="font-mono text-sm text-zinc-300">{formatUsdc(task.amount_usdc)}</span>
+                <span className="font-mono text-sm text-[#fafafa]">{formatUsdc(task.amount_usdc)}</span>
                 <span className={`rounded-full px-2 py-0.5 text-xs ${outcomeBadgeClass(outcome)}`}>
                   {outcome}
                 </span>
-                <span className="text-zinc-500">{isOpen ? "▲" : "▼"}</span>
+                <span className="text-[#71717a]">{isOpen ? "▲" : "▼"}</span>
               </div>
             </button>
 
@@ -82,7 +82,7 @@ function dotClass(event: TimelineEvent): string {
 function MoneyLine({ item }: { item: TimelineMoney }) {
   return (
     <div className="flex items-center justify-between gap-3 text-xs">
-      <span className="flex items-center gap-1.5 text-zinc-400">
+      <span className="flex items-center gap-1.5 text-[#a1a1aa]">
         {item.isRealMainnet && (
           <span className="rounded border border-red-500 bg-red-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-400">
             Real mainnet
@@ -91,7 +91,7 @@ function MoneyLine({ item }: { item: TimelineMoney }) {
         {item.label}
       </span>
       <span className="flex items-center gap-2">
-        <span className={`font-mono ${item.isRealMainnet ? "font-bold text-red-400" : "text-zinc-300"}`}>
+        <span className={`font-mono ${item.isRealMainnet ? "font-bold text-red-400" : "text-[#fafafa]"}`}>
           {formatUsdc(item.amountUsdc)}
         </span>
         {item.onChain && item.txHash ? (
@@ -99,12 +99,12 @@ function MoneyLine({ item }: { item: TimelineMoney }) {
             href={item.isRealMainnet ? baseExplorerTxUrl(item.txHash) : explorerTxUrl(item.txHash)}
             target="_blank"
             rel="noreferrer"
-            className={item.isRealMainnet ? "text-red-400 hover:underline" : "text-emerald-400 hover:underline"}
+            className={item.isRealMainnet ? "text-red-400 hover:underline" : "text-[#10b981] hover:underline"}
           >
             {item.isRealMainnet ? "Confirmed on Basescan ↗" : "Confirmed on-chain ↗"}
           </a>
         ) : (
-          <span className="italic text-zinc-500">Ledger only</span>
+          <span className="italic text-[#71717a]">Ledger only</span>
         )}
       </span>
     </div>
@@ -116,23 +116,23 @@ function EventBody({ event }: { event: TimelineEvent }) {
     case "submitted":
       return (
         <>
-          <p className="font-medium text-white">Task submitted</p>
-          <p className="mt-1 text-zinc-300">{event.description || "(no description given)"}</p>
-          <p className="mt-1 text-xs text-zinc-500">Handled by: {event.agent}</p>
+          <p className="font-medium text-[#fafafa]">Task submitted</p>
+          <p className="mt-1 text-[#fafafa]">{event.description || "(no description given)"}</p>
+          <p className="mt-1 text-xs text-[#71717a]">Handled by: {event.agent}</p>
         </>
       );
     case "quoted":
       return (
-        <p className="font-medium text-white">
-          Quoted <span className="font-mono text-zinc-300">{formatUsdc(event.amountUsdc)}</span>
+        <p className="font-medium text-[#fafafa]">
+          Quoted <span className="font-mono text-[#fafafa]">{formatUsdc(event.amountUsdc)}</span>
           {event.accepted && <span className="ml-2 text-xs text-emerald-400">(accepted)</span>}
         </p>
       );
     case "funded":
       return (
         <div>
-          <p className="font-medium text-white">Escrow funded</p>
-          <div className="mt-2 space-y-1 rounded-lg border border-zinc-800 bg-zinc-950 p-2">
+          <p className="font-medium text-[#fafafa]">Escrow funded</p>
+          <div className="mt-2 glass-card space-y-1 p-2">
             {event.items.map((item, i) => (
               <MoneyLine key={i} item={item} />
             ))}
@@ -141,15 +141,15 @@ function EventBody({ event }: { event: TimelineEvent }) {
       );
     case "job_event":
       return (
-        <p className="text-zinc-300">
-          On-chain: <span className="font-medium text-white">{event.eventName}</span>
-          <span className="ml-1 text-xs text-zinc-500">({event.contract})</span>
+        <p className="text-[#fafafa]">
+          On-chain: <span className="font-medium text-[#fafafa]">{event.eventName}</span>
+          <span className="ml-1 text-xs text-[#71717a]">({event.contract})</span>
           {event.txHash && (
             <a
               href={explorerTxUrl(event.txHash)}
               target="_blank"
               rel="noreferrer"
-              className="ml-2 text-emerald-400 hover:underline"
+              className="ml-2 text-[#10b981] hover:underline"
             >
               ↗
             </a>
@@ -158,7 +158,7 @@ function EventBody({ event }: { event: TimelineEvent }) {
       );
     case "validated":
       return (
-        <p className="text-zinc-300">
+        <p className="text-[#fafafa]">
           Validator ran —{" "}
           <span className={event.outcome === "approved" ? "text-emerald-400" : "text-amber-400"}>
             {event.outcome === "approved" ? "Passed" : "Failed"}
@@ -169,8 +169,8 @@ function EventBody({ event }: { event: TimelineEvent }) {
     case "settlement":
       return (
         <div>
-          <p className="font-medium text-white">{event.label}</p>
-          <div className="mt-2 space-y-1 rounded-lg border border-zinc-800 bg-zinc-950 p-2">
+          <p className="font-medium text-[#fafafa]">{event.label}</p>
+          <div className="mt-2 glass-card space-y-1 p-2">
             {event.items.map((item, i) => (
               <MoneyLine key={i} item={item} />
             ))}
@@ -180,19 +180,19 @@ function EventBody({ event }: { event: TimelineEvent }) {
     case "dispute_filed":
       return (
         <div>
-          <p className="font-medium text-white">
+          <p className="font-medium text-[#fafafa]">
             {event.disputeKind === "post_approval_contest"
               ? "Buyer filed a post-approval contest"
               : "Dispute auto-filed by validator"}
           </p>
-          <p className="mt-1 text-xs text-zinc-500">
+          <p className="mt-1 text-xs text-[#71717a]">
             {event.disputeKind === "post_approval_contest"
               ? "Buyer-initiated — the seller had already been paid; distinct from a validator rejection."
               : "System-triggered by the validator's rejection — not a buyer choice."}
           </p>
-          {event.reason && <p className="mt-1 text-zinc-300">Reason: {event.reason}</p>}
+          {event.reason && <p className="mt-1 text-[#fafafa]">Reason: {event.reason}</p>}
           {event.fee && (
-            <div className="mt-2 rounded-lg border border-zinc-800 bg-zinc-950 p-2">
+            <div className="mt-2 glass-card p-2">
               <MoneyLine item={event.fee} />
             </div>
           )}
@@ -201,8 +201,8 @@ function EventBody({ event }: { event: TimelineEvent }) {
     case "judge_votes":
       return (
         <div>
-          <p className="font-medium text-white">Judge panel voted</p>
-          <ul className="mt-1 space-y-1 text-xs text-zinc-400">
+          <p className="font-medium text-[#fafafa]">Judge panel voted</p>
+          <ul className="mt-1 space-y-1 text-xs text-[#a1a1aa]">
             {event.votes.map((v, i) => (
               <li key={i}>
                 <span className="font-medium">{v.choice}</span>
@@ -215,19 +215,19 @@ function EventBody({ event }: { event: TimelineEvent }) {
     case "dispute_resolved":
       return (
         <div>
-          <p className="font-medium text-white">
+          <p className="font-medium text-[#fafafa]">
             Dispute resolved —{" "}
             <span className={event.outcome === "favor_payer" ? "text-emerald-400" : "text-red-400"}>
               {event.outcome === "favor_payer" ? "Buyer won" : event.outcome === "favor_payee" ? "Seller won" : event.outcome}
             </span>
           </p>
-          <p className="mt-1 text-xs text-zinc-500">
+          <p className="mt-1 text-xs text-[#71717a]">
             {event.forcedByAdmin
               ? "Resolved by admin force-resolve (historical — this action no longer exists)."
               : "Resolved by the judge panel — a majority vote, or its deterministic tie-break if no majority was reached."}
           </p>
           {event.settlements.length > 0 && (
-            <div className="mt-2 space-y-1 rounded-lg border border-zinc-800 bg-zinc-950 p-2">
+            <div className="mt-2 glass-card space-y-1 p-2">
               {event.settlements.map((item, i) => (
                 <MoneyLine key={i} item={item} />
               ))}
@@ -238,8 +238,8 @@ function EventBody({ event }: { event: TimelineEvent }) {
     case "insurance_payout":
       return (
         <div>
-          <p className="font-medium text-white">Insurance-pool payout to buyer</p>
-          <div className="mt-2 rounded-lg border border-zinc-800 bg-zinc-950 p-2">
+          <p className="font-medium text-[#fafafa]">Insurance-pool payout to buyer</p>
+          <div className="mt-2 glass-card p-2">
             <MoneyLine item={event.item} />
           </div>
         </div>
@@ -247,15 +247,15 @@ function EventBody({ event }: { event: TimelineEvent }) {
     case "marketplace_payment":
       return (
         <div>
-          <p className="font-medium text-white">
+          <p className="font-medium text-[#fafafa]">
             {event.succeeded ? "Real payment to Parallel (search API)" : "Parallel payment failed — fell back to web_search"}
           </p>
-          <p className="mt-1 text-xs text-zinc-500">
+          <p className="mt-1 text-xs text-[#71717a]">
             {event.succeeded
               ? "Genuine mainnet USDC transfer, not simulated — the one real marketplace charge in this ledger."
               : `The task still completed on Claude's own web_search alone.${event.failureReason ? ` (${event.failureReason})` : ""}`}
           </p>
-          <div className="mt-2 rounded-lg border border-zinc-800 bg-zinc-950 p-2">
+          <div className="mt-2 glass-card p-2">
             <MoneyLine item={event.item} />
           </div>
         </div>
@@ -269,16 +269,16 @@ function TaskStory({ task }: { task: TaskDetail }) {
   const timeline = buildTaskTimeline(task);
 
   return (
-    <div className="border-t border-zinc-800 px-4 py-4 text-sm">
+    <div className="border-t border-[#ffffff14] px-4 py-4 text-sm">
       <ol className="space-y-4">
         {timeline.map((event) => (
           <li key={event.id} className="flex gap-3">
             <div className="flex flex-col items-center pt-1">
               <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${dotClass(event)}`} />
-              <span className="mt-1 w-px grow bg-zinc-800" />
+              <span className="mt-1 w-px grow bg-[#ffffff14]" />
             </div>
             <div className="min-w-0 flex-1 pb-1">
-              <p className="text-xs text-zinc-500">{formatDate(event.at)}</p>
+              <p className="text-xs text-[#71717a]">{formatDate(event.at)}</p>
               <div className="mt-0.5">
                 <EventBody event={event} />
               </div>
