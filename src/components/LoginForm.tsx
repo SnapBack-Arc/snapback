@@ -133,6 +133,8 @@ export default function LoginForm() {
         result: { userToken?: string } | undefined,
       ) => {
         if (err || !result?.userToken) {
+          console.error("[diag] onLoginComplete err (full):", JSON.stringify(err, Object.getOwnPropertyNames(err || {})));
+          (window as any).__lastOtpErr = err;
           setError(err?.message ?? "OTP verification failed");
           setPhase("idle");
           return;
