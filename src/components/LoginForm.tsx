@@ -218,7 +218,13 @@ export default function LoginForm() {
       // Opens Circle's hosted OTP entry modal; onLoginComplete fires on success.
       sdk.verifyOtp();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed");
+      console.error("Login failed - raw error:", err);
+      const message = err instanceof Error
+        ? err.message
+        : (typeof err === "object" && err !== null && "message" in err)
+          ? String((err as any).message)
+          : JSON.stringify(err);
+      setError(message || "Login failed");
       setPhase("idle");
     }
   }
