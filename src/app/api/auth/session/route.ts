@@ -58,11 +58,17 @@ export async function POST(request: Request) {
     // creation. createUserPinWithWallets is the correct endpoint for
     // initial signup (createWallet requires an existing PIN).
     const client = getUserControlledWalletsClient();
-    const pin = await client.createUserPinWithWallets({
-      userToken,
-      blockchains: [CIRCLE_ARC_BLOCKCHAIN],
-      accountType: "SCA",
-    });
+    let pin;
+    try {
+      pin = await client.createUserPinWithWallets({
+        userToken,
+        blockchains: [CIRCLE_ARC_BLOCKCHAIN],
+        accountType: "SCA",
+      });
+    } catch (err) {
+      console.error("[diag] createUserPinWithWallets error:", JSON.stringify(err, Object.getOwnPropertyNames(err || {})));
+      throw err;
+    }
     const challengeId = pin.data?.challengeId;
     if (!challengeId) {
       throw new Error("Circle did not return a PIN-setup challenge");

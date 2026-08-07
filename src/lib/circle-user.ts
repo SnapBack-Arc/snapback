@@ -32,7 +32,8 @@ export async function resolveCircleUserId(
     // Response data carries the end-user id.
     const data = res.data as { id?: string; userId?: string } | undefined;
     return data?.id ?? data?.userId ?? null;
-  } catch {
+  } catch (err) {
+    console.error("[diag] resolveCircleUserId error:", JSON.stringify(err, Object.getOwnPropertyNames(err || {})));
     return null;
   }
 }
