@@ -195,6 +195,8 @@ export default function LoginForm() {
       sdkRef.current = sdk;
 
       const deviceId = await sdk.getDeviceId();
+      // TEMP DIAGNOSTIC
+      console.log("[diag] deviceId:", deviceId);
       const res = await fetch("/api/auth/device-token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -205,16 +207,36 @@ export default function LoginForm() {
         throw new Error(body.error ?? "Failed to start login");
       }
       const { deviceToken, deviceEncryptionKey, otpToken } = await res.json();
-
-      sdk.updateConfigs(
-        {
-          appSettings: { appId: APP_ID },
-          loginConfigs: { deviceToken, deviceEncryptionKey, otpToken },
-        },
-        onLoginComplete,
+      // TEMP DIAGNOSTIC
+      console.log("[diag] deviceToken:", deviceToken?.slice(0, 20), "len:", deviceToken?.length);
+      console.log(
+        "[diag] deviceEncryptionKey:",
+        deviceEncryptionKey?.slice(0, 20),
+        "len:",
+        deviceEncryptionKey?.length,
       );
+      console.log("[diag] otpToken:", otpToken?.slice(0, 20), "len:", otpToken?.length);
+
+      const updateConfigsArg = {
+        appSettings: { appId: APP_ID },
+        loginConfigs: { deviceToken, deviceEncryptionKey, otpToken },
+      };
+      // TEMP DIAGNOSTIC
+      console.log("[diag] updateConfigs arg:", {
+        appSettings: updateConfigsArg.appSettings,
+        loginConfigs: {
+          deviceToken: deviceToken?.slice(0, 20),
+          deviceEncryptionKey: deviceEncryptionKey?.slice(0, 20),
+          otpToken: otpToken?.slice(0, 20),
+        },
+      });
+      sdk.updateConfigs(updateConfigsArg, onLoginComplete);
+      // TEMP DIAGNOSTIC
+      console.log("[diag] sdk.configs after updateConfigs:", (sdk as any).configs ?? sdk);
 
       setPhase("awaiting_otp");
+      // TEMP DIAGNOSTIC
+      console.log("[diag] about to call verifyOtp");
       // Opens Circle's hosted OTP entry modal; onLoginComplete fires on success.
       sdk.verifyOtp();
     } catch (err) {
