@@ -241,6 +241,7 @@ export default function LoginForm() {
       sdk.verifyOtp();
     } catch (err) {
       console.error("Login failed - raw error:", err);
+      (window as any).__lastLoginError = err;
       const message = err instanceof Error
         ? err.message
         : (typeof err === "object" && err !== null && "message" in err)
