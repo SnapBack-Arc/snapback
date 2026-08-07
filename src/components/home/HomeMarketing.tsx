@@ -39,10 +39,6 @@ const BUILT_ON = [
     body: "The nanopayment mechanism SnapBack insures — a research agent pays a live data source in USDC for every answer it validates.",
   },
   {
-    title: "Circle User-Controlled Wallets",
-    body: "Buyer wallets created through email OTP sign-in — no seed phrase, no password.",
-  },
-  {
     title: "Circle Developer-Controlled Wallets",
     body: "Server-signed wallets for the Treasury and the paying agent, custodied by Circle.",
   },
