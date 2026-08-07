@@ -6,6 +6,8 @@ import Image from "next/image";
 import { DEMO_TEST_ACCOUNT_EMAIL, DEMO_ADMIN_ACCOUNT_EMAIL } from "@/lib/demo/config";
 
 type Phase = "idle" | "sending" | "awaiting_otp" | "finishing";
+/** PIN-only signup fallback, separate from the email-OTP `phase` above. */
+type PinPhase = "idle" | "signing_up" | "awaiting_pin" | "finishing";
 type DemoPersona = "test" | "new" | "admin";
 /** Mirrors the real flow's sending -> awaiting_otp -> finishing beats. */
 type DemoPhase = "idle" | "sending" | "otp" | "confirming";
@@ -58,6 +60,10 @@ export default function LoginForm() {
   // Keep the SDK instance across the async OTP flow.
   const sdkRef = useRef<unknown>(null);
 
+  // PIN-only signup fallback (see onPinSignup below) — fully separate state
+  // from the email-OTP `phase` machine above so the two flows can't interfere.
+  const [pinPhase, setPinPhase] = useState<PinPhase>("idle");
+
   // Demo mode only — the email field becomes a dropdown of DEMO_ACCOUNTS
   // instead of free text. Kept as separate state from `email` so the
   // real-OTP path above is untouched either way.
@@ -69,6 +75,7 @@ export default function LoginForm() {
   const [showEmailSignup, setShowEmailSignup] = useState(false);
 
   const busy = phase === "sending" || phase === "finishing";
+  const pinBusy = pinPhase !== "idle";
 
   function selectDemoAccount(key: string) {
     const option = DEMO_ACCOUNTS.find((a) => a.key === key);
@@ -254,6 +261,79 @@ export default function LoginForm() {
     }
   }
 
+  /**
+   * PIN-only signup fallback, alongside the email-OTP flow above. Skips
+   * getDeviceId/updateConfigs(loginConfigs)/verifyOtp entirely: the server
+   * mints a userToken directly (no OTP challenge) and starts the PIN-setup
+   * challenge, which the SDK completes via execute() using
+   * updateConfigs({ authentication: ... }) instead of an OTP-derived config.
+   */
+  async function onPinSignup() {
+    setError(null);
+    if (!APP_ID) {
+      setError("NEXT_PUBLIC_CIRCLE_APP_ID is not set.");
+      return;
+    }
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) {
+      setError("Enter an email first.");
+      return;
+    }
+
+    try {
+      setPinPhase("signing_up");
+      const res = await fetch("/api/auth/pin-signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: cleanEmail }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.error ?? "PIN signup failed");
+      }
+      const { userToken, encryptionKey, challengeId } = body as {
+        userToken: string;
+        encryptionKey: string;
+        challengeId: string;
+      };
+
+      const { W3SSdk } = await import("@circle-fin/w3s-pw-web-sdk");
+      const sdk = new W3SSdk({ appSettings: { appId: APP_ID } });
+      sdk.updateConfigs({
+        appSettings: { appId: APP_ID },
+        authentication: { userToken, encryptionKey },
+      });
+
+      setPinPhase("awaiting_pin");
+      // Opens Circle's hosted PIN-setup modal; no OTP is involved here.
+      sdk.execute(challengeId, async (execErr, execResult) => {
+        if (execErr || execResult?.status !== "COMPLETE") {
+          setError(execErr?.message ?? "PIN setup was not completed");
+          setPinPhase("idle");
+          return;
+        }
+        setPinPhase("finishing");
+        const walletRes = await fetch("/api/auth/wallet-complete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userToken }),
+        });
+        if (!walletRes.ok) {
+          const walletBody = await walletRes.json().catch(() => ({}));
+          setError(walletBody.error ?? "Could not finish wallet setup");
+          setPinPhase("idle");
+          return;
+        }
+        router.push("/dash");
+        router.refresh();
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "PIN signup failed";
+      setError(message);
+      setPinPhase("idle");
+    }
+  }
+
   if (DEMO_MODE && (demoPhase === "otp" || demoPhase === "confirming") && demoOption) {
     return (
       <DemoOtpScreen
@@ -324,7 +404,7 @@ export default function LoginForm() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
-                disabled={busy}
+                disabled={busy || pinBusy}
                 className="w-full rounded-xl border border-[#3f3f46] bg-[#18181b] px-3 py-2.5 text-[#fafafa] outline-none transition focus:border-[#10b981] disabled:opacity-60"
               />
             )}
@@ -339,7 +419,7 @@ export default function LoginForm() {
             <>
               <button
                 type="submit"
-                disabled={busy}
+                disabled={busy || pinBusy}
                 className="w-full rounded-xl bg-[#10b981] px-4 py-2.5 font-semibold text-[#052e1f] transition hover:bg-[#34d399] disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {phase === "sending"
@@ -363,6 +443,43 @@ export default function LoginForm() {
                   type="button"
                   onClick={() => {
                     setPhase("idle");
+                    setError(null);
+                  }}
+                  className="text-xs text-[#71717a] hover:text-[#a1a1aa]"
+                >
+                  Cancel and try again
+                </button>
+              )}
+
+              {/* PIN-only signup fallback — new account, no email OTP. Uses
+                  the same email input above; see onPinSignup. */}
+              <button
+                type="button"
+                onClick={onPinSignup}
+                disabled={busy || pinBusy}
+                className="w-full rounded-xl border border-[#3f3f46] px-4 py-2.5 text-sm font-medium text-[#a1a1aa] transition hover:bg-[#ffffff0a] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {pinPhase === "signing_up"
+                  ? "Setting up…"
+                  : pinPhase === "awaiting_pin"
+                    ? "Enter your PIN in the popup"
+                    : pinPhase === "finishing"
+                      ? "Signing in…"
+                      : "Sign up with PIN only"}
+              </button>
+
+              {pinPhase === "awaiting_pin" && (
+                <p className="text-xs text-[#a1a1aa]">
+                  Set a PIN in the Circle popup to finish creating your account — no
+                  email code needed.
+                </p>
+              )}
+
+              {(pinPhase === "awaiting_pin" || pinPhase === "finishing") && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPinPhase("idle");
                     setError(null);
                   }}
                   className="text-xs text-[#71717a] hover:text-[#a1a1aa]"

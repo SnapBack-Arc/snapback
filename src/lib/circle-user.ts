@@ -1,5 +1,6 @@
 import "server-only";
 import { getUserControlledWalletsClient } from "@/lib/circle";
+import { CIRCLE_ARC_BLOCKCHAIN } from "@/lib/arc";
 
 /**
  * Start the Circle email-OTP login: mint a device token bound to the browser's
@@ -36,4 +37,39 @@ export async function resolveCircleUserId(
     console.error("[diag] resolveCircleUserId error:", JSON.stringify(err, Object.getOwnPropertyNames(err || {})));
     return null;
   }
+}
+
+/**
+ * PIN-only signup fallback: skips email-OTP entirely. Creates a brand-new
+ * Circle end user under a server-generated userId, mints its userToken
+ * directly (no OTP challenge involved), and starts the PIN-setup challenge.
+ * The client completes the challenge with sdk.execute() using the returned
+ * userToken/encryptionKey via sdk.updateConfigs({ authentication: ... }).
+ *
+ * Signup-only: createUserToken(userId) isn't gated by proof of email
+ * ownership the way OTP is, so this must never be used for returning-user
+ * login — only for a userId the caller just created and has not exposed to
+ * the client.
+ */
+export async function createPinOnlyUser(userId: string) {
+  const client = getUserControlledWalletsClient();
+  await client.createUser({ userId });
+
+  const tokenRes = await client.createUserToken({ userId });
+  const { userToken, encryptionKey } = tokenRes.data ?? {};
+  if (!userToken || !encryptionKey) {
+    throw new Error("Circle did not return a user token");
+  }
+
+  const pin = await client.createUserPinWithWallets({
+    userToken,
+    blockchains: [CIRCLE_ARC_BLOCKCHAIN],
+    accountType: "SCA",
+  });
+  const challengeId = pin.data?.challengeId;
+  if (!challengeId) {
+    throw new Error("Circle did not return a PIN-setup challenge");
+  }
+
+  return { userToken, encryptionKey, challengeId };
 }
