@@ -56,6 +56,8 @@ const PAYMENT_KIND_LABELS: Record<string, string> = {
   marketplace_payment: "Real marketplace payment (Parallel)",
   verification_fee: "Verification fee (Demo page)",
   dispute_insurance_premium: "Dispute-insurance premium",
+  withdrawal: "Wallet withdrawal",
+  swap: "Token swap",
 };
 
 export function paymentKindLabel(kind: string): string {

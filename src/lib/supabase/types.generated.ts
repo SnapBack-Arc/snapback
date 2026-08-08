@@ -1212,6 +1212,8 @@ export type Database = {
         | "marketplace_payment"
         | "dispute_insurance_premium"
         | "verification_fee"
+        | "withdrawal"
+        | "swap"
       payment_status:
         | "pending"
         | "escrowed"
@@ -1426,6 +1428,8 @@ export const Constants = {
         "marketplace_payment",
         "dispute_insurance_premium",
         "verification_fee",
+        "withdrawal",
+        "swap",
       ],
       payment_status: [
         "pending",
