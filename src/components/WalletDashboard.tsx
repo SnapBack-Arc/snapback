@@ -183,65 +183,72 @@ export default function WalletDashboard({
         </section>
       ) : (
         <>
-          {/* Address, balance, actions, faucet */}
-          <section className="rounded-xl border border-[#ffffff14] bg-[#18181b73] p-6 backdrop-blur-[28px]">
-            <div className="mb-1 flex items-center gap-2 text-xs uppercase tracking-wide text-[#71717a]">
-              <span>Arc Testnet address</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <a
-                href={`${ARC_EXPLORER_URL}/address/${wallet.address}`}
-                target="_blank"
-                rel="noreferrer"
-                className="font-mono text-sm text-[#a1a1aa] hover:text-[#fafafa] hover:underline"
-              >
-                {shortAddress(wallet.address)}
-              </a>
-              <CopyButton value={wallet.address} label="Copy address" />
-            </div>
+          {/* Address, balance, actions, faucet — with Token Holdings filling
+              the empty horizontal space beside it on wide screens. */}
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+            <section className="rounded-xl border border-[#ffffff14] bg-[#18181b73] p-6 backdrop-blur-[28px] lg:col-span-2">
+              <div className="mb-1 flex items-center gap-2 text-xs uppercase tracking-wide text-[#71717a]">
+                <span>Arc Testnet address</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <a
+                  href={`${ARC_EXPLORER_URL}/address/${wallet.address}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-mono text-sm text-[#a1a1aa] hover:text-[#fafafa] hover:underline"
+                >
+                  {shortAddress(wallet.address)}
+                </a>
+                <CopyButton value={wallet.address} label="Copy address" />
+              </div>
 
-            <div className="mb-1 mt-6 text-xs uppercase tracking-wide text-[#71717a]">
-              USDC balance
-            </div>
-            <div className="font-mono text-4xl font-bold text-[#fafafa]">
-              {balances ? formatDollars(balances.usdc) : "$—"}
-            </div>
+              <div className="mb-1 mt-6 text-xs uppercase tracking-wide text-[#71717a]">
+                USDC balance
+              </div>
+              <div className="font-mono text-4xl font-bold text-[#fafafa]">
+                {balances ? formatDollars(balances.usdc) : "$—"}
+              </div>
 
-            <div className="mt-6 flex flex-wrap gap-3">
-              <button
-                onClick={() => setOpenModal("deposit")}
-                className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-zinc-950 hover:bg-emerald-400"
-              >
-                Deposit
-              </button>
-              <button
-                onClick={() => setOpenModal("withdraw")}
-                className="rounded-lg border border-[#3f3f46] px-4 py-2 text-sm text-[#fafafa] hover:bg-[#ffffff0a]"
-              >
-                Withdraw
-              </button>
-              <button
-                onClick={() => setOpenModal("swap")}
-                className="rounded-lg border border-[#3f3f46] px-4 py-2 text-sm text-[#fafafa] hover:bg-[#ffffff0a]"
-              >
-                Swap
-              </button>
-              <a
-                href={FAUCET_URL}
-                target="_blank"
-                rel="noreferrer"
-                className="rounded-lg border border-[#3f3f46] px-4 py-2 text-sm text-[#a1a1aa] hover:bg-[#ffffff0a]"
-              >
-                Faucet
-              </a>
-              <button
-                onClick={loadBalances}
-                className="rounded-lg border border-[#3f3f46] px-4 py-2 text-sm text-[#a1a1aa] hover:bg-[#ffffff0a]"
-              >
-                Refresh
-              </button>
+              <div className="mt-6 flex flex-wrap gap-3">
+                <button
+                  onClick={() => setOpenModal("deposit")}
+                  className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-zinc-950 hover:bg-emerald-400"
+                >
+                  Deposit
+                </button>
+                <button
+                  onClick={() => setOpenModal("withdraw")}
+                  className="rounded-lg border border-[#3f3f46] px-4 py-2 text-sm text-[#fafafa] hover:bg-[#ffffff0a]"
+                >
+                  Withdraw
+                </button>
+                <button
+                  onClick={() => setOpenModal("swap")}
+                  className="rounded-lg border border-[#3f3f46] px-4 py-2 text-sm text-[#fafafa] hover:bg-[#ffffff0a]"
+                >
+                  Swap
+                </button>
+                <a
+                  href={FAUCET_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded-lg border border-[#3f3f46] px-4 py-2 text-sm text-[#a1a1aa] hover:bg-[#ffffff0a]"
+                >
+                  Faucet
+                </a>
+                <button
+                  onClick={loadBalances}
+                  className="rounded-lg border border-[#3f3f46] px-4 py-2 text-sm text-[#a1a1aa] hover:bg-[#ffffff0a]"
+                >
+                  Refresh
+                </button>
+              </div>
+            </section>
+
+            <div className="lg:col-span-1">
+              <TokenHoldingsList holdings={holdings} loading={holdingsLoading} maxVisible={5} />
             </div>
-          </section>
+          </div>
 
           {/* Lifetime stats */}
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
@@ -254,13 +261,10 @@ export default function WalletDashboard({
             <StatCard
               label="Total wallet balance"
               value={holdingsLoading ? "$—" : formatDollars(holdingsTotalUsd)}
-              sub={holdingsApproximate ? "≈ approximate (1:1 USD placeholder)" : undefined}
+              sub={holdingsApproximate ? "≈ includes an approximate (placeholder) value" : undefined}
             />
             <StatCard label="Lifetime transactions" value={payments.length.toLocaleString()} />
           </div>
-
-          {/* Token holdings */}
-          <TokenHoldingsList holdings={holdings} loading={holdingsLoading} />
 
           {/* Transaction history */}
           <section className="rounded-xl border border-[#ffffff14] bg-[#18181b73] backdrop-blur-[28px]">
