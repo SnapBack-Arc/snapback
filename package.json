@@ -28,6 +28,11 @@
     "server-only": "^0.0.1",
     "viem": "^2.55.2"
   },
+  "overrides": {
+    "@circle-fin/developer-controlled-wallets": {
+      "@solana/codecs-strings": "5.5.1"
+    }
+  },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
