@@ -32,8 +32,17 @@ export async function getTokenHoldings(wallet: WalletRow): Promise<TokenHolding[
       const client = getDeveloperControlledWalletsClient();
       const res = await client.getWalletTokenBalance({ id: wallet.circle_wallet_id, includeAll: true });
       const balances = res.data?.tokenBalances ?? [];
+      // TEMPORARY diagnostic logging (see /wallet investigation, item 2) —
+      // logs the indexer's raw response before any filtering, so a genuine
+      // "Circle knows about EURC/cirBTC but reports amount 0" or "Circle's
+      // Arc indexer simply hasn't caught up" can be told apart from a bug
+      // in the filter/mapping below. Remove once the real cause is found.
+      console.log(
+        `[token-holdings] wallet=${wallet.id} circle_wallet_id=${wallet.circle_wallet_id} raw tokenBalances=`,
+        JSON.stringify(balances),
+      );
       if (balances.length > 0) {
-        return balances
+        const holdings = balances
           .filter((b) => Number(b.amount) > 0)
           .map((b) => {
             const symbol = b.token.symbol ?? b.token.name ?? "Unknown";
@@ -48,14 +57,21 @@ export async function getTokenHoldings(wallet: WalletRow): Promise<TokenHolding[
               isApproximateUsd: !isUsdc,
             };
           });
+        console.log(
+          `[token-holdings] wallet=${wallet.id} indexer path used, ${balances.length} raw -> ${holdings.length} after amount>0 filter:`,
+          holdings.map((h) => `${h.symbol}=${h.amount}`).join(", ") || "(none)",
+        );
+        return holdings;
       }
-    } catch {
-      // Indexer unavailable — fall through to the RPC fallback below.
+      console.log(`[token-holdings] wallet=${wallet.id} indexer returned an empty tokenBalances array — falling back to RPC`);
+    } catch (err) {
+      console.error(`[token-holdings] wallet=${wallet.id} getWalletTokenBalance threw — falling back to RPC:`, err);
     }
   }
 
   const usdc = await getUsdcBalance(wallet.address as Address);
   const amount = Number(usdc.formatted);
+  console.log(`[token-holdings] wallet=${wallet.id} RPC fallback path used, USDC amount=${amount}`);
   if (amount <= 0) return [];
   return [
     {

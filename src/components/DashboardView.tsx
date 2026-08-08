@@ -48,6 +48,14 @@ export default function DashboardView({
               <StatCard
                 label="Nanopayments monitored"
                 value={data.nanopaymentsMonitored.toLocaleString()}
+                topRight={
+                  <span
+                    className="rounded-full bg-red-500/15 px-2 py-0.5 text-xs font-medium text-red-400"
+                    title="Flagged nanopayments, all time — same count shown in All-time paid back below"
+                  >
+                    Caught: {data.flaggedNanopaymentsAllTimeCount.toLocaleString()}
+                  </span>
+                }
                 footer={
                   data.nanopaymentsMonitoredDeltaPct === null ? (
                     <span className="text-xs text-[#71717a]">No data last month</span>
@@ -119,15 +127,20 @@ function StatCard({
   value,
   valueClass,
   footer,
+  topRight,
 }: {
   label: string;
   value: string;
   valueClass?: string;
   footer?: React.ReactNode;
+  topRight?: React.ReactNode;
 }) {
   return (
     <div className="glass-card p-5">
-      <div className="text-xs uppercase tracking-wide text-[#71717a]">{label}</div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-xs uppercase tracking-wide text-[#71717a]">{label}</div>
+        {topRight}
+      </div>
       <div className={`mt-1 font-mono text-3xl font-bold text-[#fafafa] ${valueClass ?? ""}`}>{value}</div>
       {footer && <div className="mt-2">{footer}</div>}
     </div>

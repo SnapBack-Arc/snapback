@@ -1,5 +1,5 @@
 import "server-only";
-import { AppKit, type SwapEstimate, type SwapResult } from "@circle-fin/app-kit";
+import { AppKit, isKitError, type SwapEstimate, type SwapResult } from "@circle-fin/app-kit";
 import { createCircleWalletsAdapter, type CircleWalletsAdapter } from "@circle-fin/adapter-circle-wallets";
 import { requireServerEnv } from "@/lib/env";
 
@@ -73,4 +73,17 @@ export async function estimateWalletSwap(params: WalletSwapParams): Promise<Swap
 
 export async function executeWalletSwap(params: WalletSwapParams): Promise<SwapResult> {
   return getKit().swap(swapParams(params));
+}
+
+/**
+ * True for the SDK's documented "thin testnet liquidity / no route" failure
+ * (KitError type 'LIQUIDITY', code range 6000-6999) — a real, expected Arc
+ * Testnet limitation per Circle's own quickstart docs, not a bug in this
+ * app. Falls back to a message-text check for the rare case a provider
+ * error surfaces unwrapped, not as a proper KitError instance.
+ */
+export function isLiquidityUnavailableError(err: unknown): boolean {
+  if (isKitError(err) && err.type === "LIQUIDITY") return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /\bno route\b|\bliquidity\b/i.test(message);
 }

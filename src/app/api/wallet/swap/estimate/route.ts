@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { getUserWallet } from "@/lib/circle-wallets";
-import { estimateWalletSwap } from "@/lib/swap-kit";
+import { estimateWalletSwap, isLiquidityUnavailableError } from "@/lib/swap-kit";
 
 /**
  * POST /api/wallet/swap/estimate
@@ -56,6 +56,15 @@ export async function POST(request: Request) {
       fees: estimate.fees ?? [],
     });
   } catch (err) {
+    // Thin Arc Testnet liquidity is a documented, expected limitation (see
+    // Circle's own quickstart), not a bug — surfaced with its own reason
+    // code so the modal can show a specific hint instead of a raw SDK error.
+    if (isLiquidityUnavailableError(err)) {
+      return NextResponse.json(
+        { error: "Testnet liquidity is limited for this amount — try a smaller amount.", reason: "no_route" },
+        { status: 502 },
+      );
+    }
     const message = err instanceof Error ? err.message : "Failed to get a swap quote";
     return NextResponse.json({ error: message }, { status: 502 });
   }

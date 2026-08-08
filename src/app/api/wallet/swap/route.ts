@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { getUserWallet } from "@/lib/circle-wallets";
-import { executeWalletSwap } from "@/lib/swap-kit";
+import { executeWalletSwap, isLiquidityUnavailableError } from "@/lib/swap-kit";
 import { createServiceSupabase } from "@/lib/supabase/server";
 import { ARC_CHAIN_ID } from "@/lib/arc";
 import type { Database } from "@/lib/supabase/types.generated";
@@ -100,7 +100,15 @@ export async function POST(request: Request) {
       paymentId: payment?.id ?? null,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Swap failed";
+    // Same documented thin-testnet-liquidity limitation as the estimate
+    // route can also surface here — a quote can go stale by the time
+    // execution runs. Not this app's bug; see isLiquidityUnavailableError.
+    const isLiquidity = isLiquidityUnavailableError(err);
+    const message = isLiquidity
+      ? "Testnet liquidity is limited for this amount — try a smaller amount."
+      : err instanceof Error
+        ? err.message
+        : "Swap failed";
     await supabase.from("payments").insert({
       from_wallet_id: wallet.id,
       kind: "swap",
@@ -109,7 +117,7 @@ export async function POST(request: Request) {
       chain_id: ARC_CHAIN_ID,
       metadata: { token_in: tokenIn, token_out: tokenOut, amount_in: amountIn, error: message },
     });
-    return NextResponse.json({ error: message }, { status: 502 });
+    return NextResponse.json({ error: message, ...(isLiquidity ? { reason: "no_route" } : {}) }, { status: 502 });
   }
 }
 

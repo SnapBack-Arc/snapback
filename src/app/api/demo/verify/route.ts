@@ -152,71 +152,93 @@ export async function POST(request: Request) {
   let payoutUsdc = 0;
   let payoutPaymentId: string | null = null;
 
-  if (verdict === "INCORRECT") {
-    const reliability = await getSiteReliability(site);
-    payoutUsdc = computePayoutUsdc(nanopaymentUsdc, reliability);
+  // Everything below this point runs after a real fee charge is already
+  // recorded (validationFeePaymentId) — nothing in here may throw
+  // uncaught. Three historical payments (e1e27a62, f8e02c93, dc2337f0 —
+  // Aug 1-3) were left with no nanopayment_validations row at all because
+  // an unguarded getSiteReliability call / the final insert below threw
+  // (two predate the nanopayment_validations table's own migration; the
+  // third landed in a window right after the metadata-column migration,
+  // consistent with a deploy/migration-ordering race) and the framework's
+  // generic 500 swallowed it with no record of which fee payment was
+  // orphaned. This try/catch doesn't make that class of failure
+  // impossible, but it makes it loud and traceable instead of silent.
+  try {
+    if (verdict === "INCORRECT") {
+      const reliability = await getSiteReliability(site);
+      payoutUsdc = computePayoutUsdc(nanopaymentUsdc, reliability);
 
-    if (payoutUsdc > 0) {
-      try {
-        const treasury = await ensureTreasuryWallet();
-        const circleTxId = await transferUsdc(treasury.circle_wallet_id, wallet.address as Address, String(payoutUsdc));
-        const txHash = circleTxId ? await waitForTxHash(circleTxId) : null;
+      if (payoutUsdc > 0) {
+        try {
+          const treasury = await ensureTreasuryWallet();
+          const circleTxId = await transferUsdc(treasury.circle_wallet_id, wallet.address as Address, String(payoutUsdc));
+          const txHash = circleTxId ? await waitForTxHash(circleTxId) : null;
 
-        const { data: payoutPayment } = await supabase
-          .from("payments")
-          .insert({
-            to_wallet_id: wallet.id,
-            kind: "insurance_payout",
-            status: "released",
-            amount_usdc: payoutUsdc,
-            tx_hash: txHash,
-            chain_id: ARC_CHAIN_ID,
-            metadata: { reason: "nanopayment_validation_incorrect", site },
-          })
-          .select("id")
-          .single();
-        payoutPaymentId = payoutPayment?.id ?? null;
-      } catch (err) {
-        console.error("nanopayment insurance payout failed:", err);
-        const { data: failedPayment } = await supabase
-          .from("payments")
-          .insert({
-            to_wallet_id: wallet.id,
-            kind: "insurance_payout",
-            status: "failed",
-            amount_usdc: 0,
-            tx_hash: null,
-            chain_id: ARC_CHAIN_ID,
-            metadata: {
-              reason: "nanopayment_validation_incorrect",
-              site,
-              error: err instanceof Error ? err.message : String(err),
-            },
-          })
-          .select("id")
-          .single();
-        payoutPaymentId = failedPayment?.id ?? null;
-        payoutUsdc = 0;
+          const { data: payoutPayment } = await supabase
+            .from("payments")
+            .insert({
+              to_wallet_id: wallet.id,
+              kind: "insurance_payout",
+              status: "released",
+              amount_usdc: payoutUsdc,
+              tx_hash: txHash,
+              chain_id: ARC_CHAIN_ID,
+              metadata: { reason: "nanopayment_validation_incorrect", site },
+            })
+            .select("id")
+            .single();
+          payoutPaymentId = payoutPayment?.id ?? null;
+        } catch (err) {
+          console.error("nanopayment insurance payout failed:", err);
+          const { data: failedPayment } = await supabase
+            .from("payments")
+            .insert({
+              to_wallet_id: wallet.id,
+              kind: "insurance_payout",
+              status: "failed",
+              amount_usdc: 0,
+              tx_hash: null,
+              chain_id: ARC_CHAIN_ID,
+              metadata: {
+                reason: "nanopayment_validation_incorrect",
+                site,
+                error: err instanceof Error ? err.message : String(err),
+              },
+            })
+            .select("id")
+            .single();
+          payoutPaymentId = failedPayment?.id ?? null;
+          payoutUsdc = 0;
+        }
       }
     }
-  }
 
-  await supabase.from("nanopayment_validations").insert({
-    wallet_id: wallet.id,
-    site,
-    instruction,
-    nanopayment_usdc: nanopaymentUsdc,
-    validation_fee_usdc: feeUsdc,
-    verdict: verdict === "CORRECT" ? "correct" : "incorrect",
-    payout_usdc: payoutUsdc,
-    nanopayment_payment_id: nanopayment?.paymentId ?? null,
-    validation_fee_payment_id: validationFeePaymentId,
-    payout_payment_id: payoutPaymentId,
-    // reasoning/deliverable persisted here (not just returned below) so the
-    // dashboard's transaction detail modal can show them after the fact —
-    // previously both were discarded the moment this response was sent.
-    metadata: { llm_cost: llmCost, reasoning, deliverable: deliverable as Json },
-  });
+    await supabase.from("nanopayment_validations").insert({
+      wallet_id: wallet.id,
+      site,
+      instruction,
+      nanopayment_usdc: nanopaymentUsdc,
+      validation_fee_usdc: feeUsdc,
+      verdict: verdict === "CORRECT" ? "correct" : "incorrect",
+      payout_usdc: payoutUsdc,
+      nanopayment_payment_id: nanopayment?.paymentId ?? null,
+      validation_fee_payment_id: validationFeePaymentId,
+      payout_payment_id: payoutPaymentId,
+      // reasoning/deliverable persisted here (not just returned below) so the
+      // dashboard's transaction detail modal can show them after the fact —
+      // previously both were discarded the moment this response was sent.
+      metadata: { llm_cost: llmCost, reasoning, deliverable: deliverable as Json },
+    });
+  } catch (err) {
+    console.error(
+      `demo verify: fee payment ${validationFeePaymentId} charged but nanopayment_validations was never recorded — `,
+      err,
+    );
+    return NextResponse.json(
+      { error: "Verification fee was charged but recording the result failed. Contact support with this reference: " + validationFeePaymentId },
+      { status: 500 },
+    );
+  }
 
   return NextResponse.json({ verdict, reasoning, payoutUsdc, nanopaymentUsdc, site, llmCost });
 }

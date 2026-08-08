@@ -11,12 +11,22 @@ const QUICK_PCTS = [30, 50, 80] as const;
 type Quote = { estimatedOutput: { token: string; amount: string } } | null;
 type Result = { status: string; txHash: string | null; explorerUrl: string | null; amountOut: string | null };
 
+/** A small, testnet-liquidity-friendly default — Circle's own quickstart
+ *  example uses 1.00 USDC; thin Arc Testnet liquidity is documented to make
+ *  larger amounts more likely to fail with "no route". */
+const SUGGESTED_AMOUNT = 1;
+
 function label(symbol: string): string {
   return TOKEN_LABELS[symbol.toUpperCase()] ?? symbol;
 }
 
 function holdingFor(holdings: TokenHolding[], symbol: string): TokenHolding | undefined {
   return holdings.find((h) => h.symbol.toUpperCase() === symbol.toUpperCase());
+}
+
+function suggestedAmountFor(balance: number): string {
+  if (balance <= 0) return "";
+  return Math.min(SUGGESTED_AMOUNT, balance).toString();
 }
 
 export default function SwapModal({
@@ -31,30 +41,47 @@ export default function SwapModal({
   const payableTokens = holdings.filter((h) => h.amount > 0).map((h) => h.symbol.toUpperCase());
   const [tokenIn, setTokenIn] = useState<string>(payableTokens[0] ?? "USDC");
   const [tokenOut, setTokenOut] = useState<string>(SWAP_TOKENS.find((t) => t !== payableTokens[0]) ?? "EURC");
-  const [amountIn, setAmountIn] = useState("");
+  const [amountIn, setAmountIn] = useState(() => suggestedAmountFor(holdingFor(holdings, payableTokens[0])?.amount ?? 0));
   const [quote, setQuote] = useState<Quote>(null);
   const [quoting, setQuoting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorReason, setErrorReason] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
 
   const available = walletControl === "developer";
   const payBalance = holdingFor(holdings, tokenIn)?.amount ?? 0;
+  // Includes the current tokenIn even when its balance is 0 — reachable
+  // right after flipping into a token the wallet doesn't hold yet.
+  const payTokenOptions = Array.from(new Set([...payableTokens, tokenIn]));
 
   function updateAmountIn(value: string) {
     setAmountIn(value);
     setQuote(null);
+    setErrorReason(null);
   }
 
   function updateTokenIn(next: string) {
     setTokenIn(next);
     if (next === tokenOut) setTokenOut(SWAP_TOKENS.find((t) => t !== next) ?? tokenOut);
     setQuote(null);
+    setErrorReason(null);
   }
 
   function updateTokenOut(next: string) {
     setTokenOut(next);
     setQuote(null);
+    setErrorReason(null);
+  }
+
+  function flip() {
+    const nextAmountIn = quote ? quote.estimatedOutput.amount : amountIn;
+    setTokenIn(tokenOut);
+    setTokenOut(tokenIn);
+    setAmountIn(nextAmountIn);
+    setQuote(null);
+    setError(null);
+    setErrorReason(null);
   }
 
   // Stale quotes are cleared eagerly by the input handlers below (setQuote(null)
@@ -70,6 +97,7 @@ export default function SwapModal({
       if (!active) return;
       setQuoting(true);
       setError(null);
+      setErrorReason(null);
       fetch("/api/wallet/swap/estimate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -78,7 +106,10 @@ export default function SwapModal({
         .then(async (res) => {
           const body = await res.json();
           if (!active) return;
-          if (!res.ok) throw new Error(body.error ?? "Failed to get a quote");
+          if (!res.ok) {
+            setErrorReason(body.reason ?? null);
+            throw new Error(body.error ?? "Failed to get a quote");
+          }
           setQuote(body);
         })
         .catch((err) => {
@@ -99,6 +130,7 @@ export default function SwapModal({
   async function confirmSwap() {
     setSubmitting(true);
     setError(null);
+    setErrorReason(null);
     try {
       const res = await fetch("/api/wallet/swap", {
         method: "POST",
@@ -106,7 +138,10 @@ export default function SwapModal({
         body: JSON.stringify({ tokenIn, tokenOut, amountIn }),
       });
       const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? "Swap failed");
+      if (!res.ok) {
+        setErrorReason(body.reason ?? null);
+        throw new Error(body.error ?? "Swap failed");
+      }
       setResult(body);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Swap failed");
@@ -199,7 +234,7 @@ export default function SwapModal({
               disabled={submitting}
               className="rounded-lg border border-[#3f3f46] bg-[#18181b] px-2 py-1.5 text-sm text-[#fafafa] outline-none disabled:opacity-60"
             >
-              {payableTokens.map((t) => (
+              {payTokenOptions.map((t) => (
                 <option key={t} value={t}>
                   {label(t)}
                 </option>
@@ -227,6 +262,27 @@ export default function SwapModal({
               Max
             </button>
           </div>
+        </div>
+
+        <div className="flex justify-center">
+          <button
+            type="button"
+            onClick={flip}
+            disabled={submitting}
+            aria-label="Reverse pay and receive"
+            title="Reverse pay and receive"
+            className="-my-2 flex h-8 w-8 items-center justify-center rounded-full border border-[#3f3f46] bg-[#18181b] text-[#a1a1aa] hover:bg-[#ffffff0a] hover:text-[#fafafa] disabled:opacity-40"
+          >
+            <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
+              <path
+                d="M6 4v9M6 13l-2.5-2.5M6 13l2.5-2.5M14 16V7M14 7l-2.5 2.5M14 7l2.5 2.5"
+                stroke="currentColor"
+                strokeWidth={1.5}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
         </div>
 
         <div className="rounded-lg border border-[#3f3f46] bg-[#09090b] p-3">
@@ -259,7 +315,21 @@ export default function SwapModal({
           </div>
         </div>
 
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {error && (
+          <div className="space-y-2">
+            <p className="text-sm text-red-400">{error}</p>
+            {errorReason === "no_route" && (
+              <button
+                type="button"
+                onClick={() => updateAmountIn(suggestedAmountFor(payBalance))}
+                disabled={payBalance <= 0}
+                className="text-xs text-emerald-400 hover:underline disabled:opacity-40"
+              >
+                Try {label(tokenIn)} {suggestedAmountFor(payBalance) || SUGGESTED_AMOUNT}
+              </button>
+            )}
+          </div>
+        )}
 
         <button
           type="button"
