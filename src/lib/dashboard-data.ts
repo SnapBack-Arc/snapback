@@ -1,5 +1,6 @@
 import "server-only";
 import { createServiceSupabase } from "@/lib/supabase/server";
+import { getSiteReliability, NANOPAYMENT_SITE, type SiteReliability } from "@/lib/nanopayment-insurance";
 
 /**
  * Monitoring dashboard data — real nanopayments (an agent-to-agent x402
@@ -30,15 +31,34 @@ export type RecentTransaction = {
   createdAt: string;
 };
 
+/** The most recent flagged nanopayment across this wallet's full history
+ *  (not just the RECENT_TRANSACTIONS_LIMIT-capped recentTransactions list) —
+ *  a real, specific catch to show in the "Flagged today" widget's explainer
+ *  instead of a fabricated example. */
+export type RecentFlaggedExample = {
+  title: string;
+  site: string;
+  payoutUsdc: number;
+  createdAt: string;
+};
+
 export type DashboardData = {
   nanopaymentsMonitored: number;
   nanopaymentsMonitoredDeltaPct: number | null;
-  paidBackThisMonthUsdc: number;
-  flaggedNanopaymentsThisMonthCount: number;
+  paidBackAllTimeUsdc: number;
+  flaggedNanopaymentsAllTimeCount: number;
   flaggedTodayPct: number | null;
   flaggedTodayCount: number;
+  todayCheckedCount: number;
   flagRateLast7Days: FlagRateDay[];
   recentTransactions: RecentTransaction[];
+  /** This wallet's own most recent flagged nanopayment, or null if it's
+   *  never had one. */
+  recentFlaggedExample: RecentFlaggedExample | null;
+  /** Platform-wide (cross-wallet) reliability for the paid site — real
+   *  aggregate data, used as an honest fallback when this wallet has no
+   *  flagged history of its own yet. */
+  siteReliability: SiteReliability;
 };
 
 const RECENT_TRANSACTIONS_LIMIT = 10;
@@ -72,8 +92,8 @@ export async function getDashboardData(walletId: string): Promise<DashboardData>
       ? ((thisMonthRows.length - lastMonthRows.length) / lastMonthRows.length) * 100
       : null;
 
-  const paidBackThisMonthUsdc = thisMonthRows.reduce((s, r) => s + Number(r.payout_usdc), 0);
-  const flaggedNanopaymentsThisMonthCount = thisMonthRows.filter((r) => r.verdict === "incorrect").length;
+  const paidBackAllTimeUsdc = rows.reduce((s, r) => s + Number(r.payout_usdc), 0);
+  const flaggedNanopaymentsAllTimeCount = rows.filter((r) => r.verdict === "incorrect").length;
 
   const todayRows = rows.filter((r) => new Date(r.created_at) >= todayStart);
   const todayFlagged = todayRows.filter((r) => r.verdict === "incorrect");
@@ -104,15 +124,32 @@ export async function getDashboardData(walletId: string): Promise<DashboardData>
     createdAt: r.created_at,
   }));
 
+  // rows is already ordered created_at desc, so the first incorrect verdict
+  // is this wallet's single most recent flagged nanopayment.
+  const latestFlaggedRow = rows.find((r) => r.verdict === "incorrect");
+  const recentFlaggedExample: RecentFlaggedExample | null = latestFlaggedRow
+    ? {
+        title: latestFlaggedRow.instruction,
+        site: latestFlaggedRow.site,
+        payoutUsdc: Number(latestFlaggedRow.payout_usdc),
+        createdAt: latestFlaggedRow.created_at,
+      }
+    : null;
+
+  const siteReliability = await getSiteReliability(NANOPAYMENT_SITE);
+
   return {
     nanopaymentsMonitored: rows.length,
     nanopaymentsMonitoredDeltaPct,
-    paidBackThisMonthUsdc,
-    flaggedNanopaymentsThisMonthCount,
+    paidBackAllTimeUsdc,
+    flaggedNanopaymentsAllTimeCount,
     flaggedTodayPct,
     flaggedTodayCount: todayFlagged.length,
+    todayCheckedCount: todayRows.length,
     flagRateLast7Days,
     recentTransactions,
+    recentFlaggedExample,
+    siteReliability,
   };
 }
 

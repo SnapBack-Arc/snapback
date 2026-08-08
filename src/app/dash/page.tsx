@@ -5,6 +5,7 @@ import { getSession } from "@/lib/session";
 import { getUserWallet } from "@/lib/circle-wallets";
 import { getDashboardData } from "@/lib/dashboard-data";
 import { isAdminAddress } from "@/lib/admin";
+import { NANOPAYMENT_SITE } from "@/lib/nanopayment-insurance";
 
 export default async function DashboardPage() {
   const session = await getSession();
@@ -18,12 +19,15 @@ export default async function DashboardPage() {
     : {
         nanopaymentsMonitored: 0,
         nanopaymentsMonitoredDeltaPct: null,
-        paidBackThisMonthUsdc: 0,
-        flaggedNanopaymentsThisMonthCount: 0,
+        paidBackAllTimeUsdc: 0,
+        flaggedNanopaymentsAllTimeCount: 0,
         flaggedTodayPct: null,
         flaggedTodayCount: 0,
+        todayCheckedCount: 0,
         flagRateLast7Days: [],
         recentTransactions: [],
+        recentFlaggedExample: null,
+        siteReliability: { site: NANOPAYMENT_SITE, correctCount: 0, totalCount: 0, smoothedCorrectRate: 0 },
       };
 
   return (

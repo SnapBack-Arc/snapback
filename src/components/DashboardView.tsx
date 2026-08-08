@@ -1,19 +1,9 @@
 import type { DashboardData } from "@/lib/dashboard-data";
+import FlaggedTodayWidget from "@/components/FlaggedTodayWidget";
+import RecentTransactionsSection from "@/components/RecentTransactionsSection";
 
 function formatDollars(value: number): string {
   return `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-/** Same as formatDollars, but a genuinely non-zero nanopayment-scale amount
- *  (e.g. $0.01) that would round to $0.00 at 2 decimals shows enough extra
- *  precision to prove it's real — same reasoning as lib/format.ts's
- *  formatUsdcPrecise, just $-prefixed to match this page's other figures. */
-function formatDollarsPrecise(value: number): string {
-  if (value !== 0 && Math.abs(value) < 0.005) {
-    const trimmed = value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
-    return `$${trimmed}`;
-  }
-  return formatDollars(value);
 }
 
 /**
@@ -72,15 +62,22 @@ export default function DashboardView({
                 }
               />
 
-              <FlagRing pct={data.flaggedTodayPct} flaggedCount={data.flaggedTodayCount} />
+              <FlaggedTodayWidget
+                flaggedTodayPct={data.flaggedTodayPct}
+                flaggedTodayCount={data.flaggedTodayCount}
+                todayCheckedCount={data.todayCheckedCount}
+                flagRateLast7Days={data.flagRateLast7Days}
+                recentFlaggedExample={data.recentFlaggedExample}
+                siteReliability={data.siteReliability}
+              />
 
               <StatCard
-                label="Paid back this month"
-                value={formatDollars(data.paidBackThisMonthUsdc)}
+                label="All-time paid back"
+                value={formatDollars(data.paidBackAllTimeUsdc)}
                 valueClass="text-emerald-400"
                 footer={
                   <span className="text-xs text-[#71717a]">
-                    across {data.flaggedNanopaymentsThisMonthCount.toLocaleString()} flagged nanopayments
+                    across {data.flaggedNanopaymentsAllTimeCount.toLocaleString()} flagged nanopayments, all time
                   </span>
                 }
               />
@@ -109,41 +106,7 @@ export default function DashboardView({
               </div>
             </section>
 
-            <section className="glass-card overflow-hidden">
-              <div className="border-b border-[#ffffff14] px-6 py-4 text-xs uppercase tracking-wide text-[#71717a]">
-                Recent transactions
-              </div>
-              {data.recentTransactions.length === 0 ? (
-                <div className="p-8 text-center text-sm text-[#a1a1aa]">
-                  No nanopayments yet — agent-to-agent transactions involved here will show up here.
-                </div>
-              ) : (
-                <div className="divide-y divide-[#ffffff14]">
-                  {data.recentTransactions.map((t) => (
-                    <div key={t.id} className="flex items-start justify-between gap-4 px-6 py-4">
-                      <div>
-                        <div className="font-semibold text-[#fafafa]">{t.title}</div>
-                        <div className="mt-1 text-xs text-[#71717a]">
-                          {t.agentName} · value {formatDollarsPrecise(t.valueUsdc)}
-                        </div>
-                      </div>
-                      {t.flagged && (
-                        <div className="flex shrink-0 flex-col items-end gap-1">
-                          <span className="rounded-full bg-red-500/15 px-2.5 py-1 text-xs font-medium text-red-400">
-                            Flagged
-                          </span>
-                          <span
-                            className={`text-xs ${t.paidBack ? "text-emerald-400" : "text-amber-400"}`}
-                          >
-                            {t.paidBack ? "Paid back" : "Not paid back yet"}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
+            <RecentTransactionsSection transactions={data.recentTransactions} />
           </>
         )}
       </div>
@@ -167,30 +130,6 @@ function StatCard({
       <div className="text-xs uppercase tracking-wide text-[#71717a]">{label}</div>
       <div className={`mt-1 font-mono text-3xl font-bold text-[#fafafa] ${valueClass ?? ""}`}>{value}</div>
       {footer && <div className="mt-2">{footer}</div>}
-    </div>
-  );
-}
-
-function FlagRing({ pct, flaggedCount }: { pct: number | null; flaggedCount: number }) {
-  const displayPct = pct ?? 0;
-  return (
-    <div className="glass-card flex items-center gap-4 p-5">
-      <div
-        className="relative flex h-16 w-16 shrink-0 items-center justify-center rounded-full"
-        style={{
-          background: `conic-gradient(#f59e0b ${displayPct * 3.6}deg, var(--glass-border) 0deg)`,
-        }}
-      >
-        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[#0c0c0e]">
-          <span className="font-mono text-sm font-semibold text-[#f59e0b]">
-            {pct === null ? "—" : `${Math.round(pct)}%`}
-          </span>
-        </div>
-      </div>
-      <div>
-        <div className="text-xs uppercase tracking-wide text-[#71717a]">Flagged today</div>
-        <div className="text-xs text-[#71717a]">{flaggedCount.toLocaleString()} txns</div>
-      </div>
     </div>
   );
 }

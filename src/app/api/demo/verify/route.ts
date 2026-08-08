@@ -5,6 +5,7 @@ import { getUserWallet } from "@/lib/circle-wallets";
 import { verifyAnswer, demoVerificationFeeUsdc, VERIFY_MODEL } from "@/lib/agents/verify";
 import { estimateCallCostUsd } from "@/lib/llm-cost";
 import { createServiceSupabase } from "@/lib/supabase/server";
+import type { Json } from "@/lib/supabase/types.generated";
 import { ARC_CHAIN_ID } from "@/lib/arc";
 import { transferUsdc, waitForTxHash } from "@/lib/escrow";
 import { ensureTreasuryWallet } from "@/lib/app-wallets";
@@ -211,7 +212,10 @@ export async function POST(request: Request) {
     nanopayment_payment_id: nanopayment?.paymentId ?? null,
     validation_fee_payment_id: validationFeePaymentId,
     payout_payment_id: payoutPaymentId,
-    metadata: { llm_cost: llmCost },
+    // reasoning/deliverable persisted here (not just returned below) so the
+    // dashboard's transaction detail modal can show them after the fact —
+    // previously both were discarded the moment this response was sent.
+    metadata: { llm_cost: llmCost, reasoning, deliverable: deliverable as Json },
   });
 
   return NextResponse.json({ verdict, reasoning, payoutUsdc, nanopaymentUsdc, site, llmCost });
